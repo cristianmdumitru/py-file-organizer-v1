@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import io
 from datetime import datetime
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -15,6 +13,7 @@ from file_organizer.exif import _from_mtime, _parse_exif_date, get_date, get_met
 # ---------------------------------------------------------------------------
 # get_metadata
 # ---------------------------------------------------------------------------
+
 
 class TestGetMetadata:
     def test_extracts_date_and_camera(self, tmp_path):
@@ -56,6 +55,12 @@ class TestGetMetadata:
 
         assert result["camera"] == "iPhone 15 Pro"
 
+
+# ---------------------------------------------------------------------------
+# _parse_exif_date
+# ---------------------------------------------------------------------------
+
+
 class TestParseExifDate:
     def test_valid_date(self):
         result = _parse_exif_date("2023:08:15 10:30:00")
@@ -78,6 +83,7 @@ class TestParseExifDate:
 # ---------------------------------------------------------------------------
 # get_date — EXIF path
 # ---------------------------------------------------------------------------
+
 
 class TestGetDateExif:
     def test_uses_datetime_original_when_present(self, tmp_path):
@@ -136,6 +142,7 @@ class TestGetDateExif:
 # _from_mtime
 # ---------------------------------------------------------------------------
 
+
 class TestFromMtime:
     def test_returns_datetime(self, tmp_path):
         f = tmp_path / "file.mp4"
@@ -149,8 +156,10 @@ class TestFromMtime:
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 class _FakeTag:
     """Minimal stand-in for an exifread IfdTag."""
+
     def __init__(self, value: str) -> None:
         self._value = value
 

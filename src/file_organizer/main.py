@@ -72,6 +72,7 @@ def main() -> None:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+
 def _prompt_path(label: str) -> Path:
     value = input(f"{label}: ").strip()
     if not value:
@@ -99,7 +100,12 @@ def _print_summary(summary: dict, dry_run: bool) -> None:
         f"\n{prefix}Done. "
         f"Copied: {summary['copied']}  |  "
         f"Skipped: {summary['skipped']}  |  "
+        f"Superseded: {len(summary['superseded'])}  |  "
         f"Errors: {len(summary['errors'])}"
     )
+    if summary["superseded"]:
+        print(f"\n{prefix}Superseded — transcoded/converted version already exists at destination:")
+        for entry in summary["superseded"]:
+            print(f"  {entry}")
     for err in summary["errors"]:
         print(f"  ERROR: {err}", file=sys.stderr)
