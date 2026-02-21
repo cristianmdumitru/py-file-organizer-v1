@@ -24,6 +24,12 @@ def main() -> None:
         help="Group by day (YYYY-MM-DD) instead of month.",
     )
     parser.add_argument(
+        "--camera",
+        "-c",
+        action="store_true",
+        help="Group by camera model within the destination folder.",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print planned copies without writing any files.",
@@ -34,6 +40,9 @@ def main() -> None:
     dest = args.dest or _prompt_path("Destination directory")
     event = args.event or _prompt_optional("Event name (optional)")
     group_by_day = args.day or (args.day is False and _prompt_bool("Group by day?", default=False))
+    group_by_camera = args.camera or (
+        args.camera is False and _prompt_bool("Group by camera?", default=False)
+    )
     dry_run = args.dry_run or _prompt_bool("Dry run?", default=False)
 
     if not source.is_dir():
@@ -49,6 +58,7 @@ def main() -> None:
             dest,
             event=event,
             group_by_day=group_by_day,
+            group_by_camera=group_by_camera,
             dry_run=dry_run,
         )
     except Exception as exc:

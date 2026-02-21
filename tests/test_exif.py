@@ -9,12 +9,52 @@ from unittest.mock import patch
 
 import pytest
 
-from file_organizer.exif import _from_mtime, _parse_exif_date, get_date
+from file_organizer.exif import _from_mtime, _parse_exif_date, get_date, get_metadata
 
 
 # ---------------------------------------------------------------------------
-# _parse_exif_date
+# get_metadata
 # ---------------------------------------------------------------------------
+
+class TestGetMetadata:
+    def test_extracts_date_and_camera(self, tmp_path):
+        fake_file = tmp_path / "photo.jpg"
+        fake_file.write_bytes(b"\xff\xd8\xff")
+
+        fake_tags = {
+            "EXIF DateTimeOriginal": _FakeTag("2022:06:01 12:00:00"),
+            "Image Make": _FakeTag("Sony"),
+            "Image Model": _FakeTag("A7III"),
+        }
+        with patch("file_organizer.exif.exifread.process_file", return_value=fake_tags):
+            result = get_metadata(fake_file)
+
+        assert result["date"] == datetime(2022, 6, 1, 12, 0, 0)
+        assert result["camera"] == "Sony A7III"
+
+    def test_handles_missing_camera_info(self, tmp_path):
+        fake_file = tmp_path / "photo.jpg"
+        fake_file.write_bytes(b"\xff\xd8\xff")
+
+        fake_tags = {"EXIF DateTimeOriginal": _FakeTag("2022:06:01 12:00:00")}
+        with patch("file_organizer.exif.exifread.process_file", return_value=fake_tags):
+            result = get_metadata(fake_file)
+
+        assert result["camera"] is None
+
+    def test_avoids_duplicate_make_in_model(self, tmp_path):
+        fake_file = tmp_path / "photo.jpg"
+        fake_file.write_bytes(b"\xff\xd8\xff")
+
+        fake_tags = {
+            "EXIF DateTimeOriginal": _FakeTag("2022:06:01 12:00:00"),
+            "Image Make": _FakeTag("Apple"),
+            "Image Model": _FakeTag("iPhone 15 Pro"),
+        }
+        with patch("file_organizer.exif.exifread.process_file", return_value=fake_tags):
+            result = get_metadata(fake_file)
+
+        assert result["camera"] == "iPhone 15 Pro"
 
 class TestParseExifDate:
     def test_valid_date(self):

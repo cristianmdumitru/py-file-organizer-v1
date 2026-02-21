@@ -7,7 +7,8 @@ import shutil
 from pathlib import Path
 from typing import TypedDict
 
-from file_organizer.exif import get_date
+from file_organizer.exif import get_metadata
+
 
 SUPPORTED_EXTENSIONS: frozenset[str] = frozenset(
     {
@@ -32,6 +33,7 @@ def organise(
     dest: Path,
     event: str | None = None,
     group_by_day: bool = False,
+    group_by_camera: bool = False,
     dry_run: bool = False,
 ) -> Summary:
     """Recursively copy supported media files from *source* to *dest/YYYY/subfolder*.
@@ -40,13 +42,15 @@ def organise(
       - Default: YYYY-MM
       - group_by_day=True: YYYY-MM-DD
       - event provided: <date-part>_event
+      - group_by_camera=True: <subfolder>/<camera_model>
 
     Args:
-        source:       Directory to scan (recursively).
-        dest:         Root destination directory.
-        event:        Optional event name to append to the subfolder.
-        group_by_day: If True, group files by day (YYYY-MM-DD) instead of month.
-        dry_run:      When True, print planned actions without touching the filesystem.
+        source:          Directory to scan (recursively).
+        dest:            Root destination directory.
+        event:           Optional event name to append to the subfolder.
+        group_by_day:    If True, group files by day (YYYY-MM-DD) instead of month.
+        group_by_camera: If True, group files by camera model within the subfolder.
+        dry_run:         When True, print planned actions without touching the filesystem.
 
     Returns:
         A summary with counts of copied/skipped files and any error messages.
@@ -63,7 +67,7 @@ def organise(
             continue
 
         try:
-            _process_file(filepath, dest, event, group_by_day, dry_run, summary)
+            _process_file(filepath, dest, event, group_by_day, group_by_camera, dry_run, summary)
         except Exception as exc:
             summary["errors"].append(f"{filepath}: {exc}")
 
@@ -79,10 +83,12 @@ def _process_file(
     dest: Path,
     event: str | None,
     group_by_day: bool,
+    group_by_camera: bool,
     dry_run: bool,
     summary: Summary,
 ) -> None:
-    date = get_date(filepath)
+    meta = get_metadata(filepath)
+    date = meta["date"]
 
     # Structure: dest / YYYY / YYYY-MM[-DD][_event]
     year_str = f"{date.year:04d}"
@@ -95,7 +101,13 @@ def _process_file(
         subfolder = f"{subfolder}_{event}"
 
     target_dir = dest / year_str / subfolder
+
+    if group_by_camera:
+        camera = meta["camera"] or "Unknown Camera"
+        target_dir = target_dir / camera
+
     target = _resolve_target(filepath, target_dir)
+
 
     if target is None:
         # Identical file already present — skip
