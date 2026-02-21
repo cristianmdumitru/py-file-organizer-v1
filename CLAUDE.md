@@ -4,52 +4,38 @@ This file provides guidance for AI assistants (and developers) working on this r
 
 ## Project Overview
 
-**py-file-organizer-v1** is a Python-based file organization tool. The project automatically organizes files in a given directory by sorting them into subdirectories based on configurable rules (e.g., file extension, date modified, file size).
-
-**Status:** Early development — the repository was just initialized and does not yet contain source code, tests, or build infrastructure.
+**py-file-organizer-v1** copies photos, RAW files, and videos into a `dest/YYYY/MM/` folder hierarchy based on EXIF date metadata. Originals are never moved or deleted.
 
 ## Repository Structure
 
 ```
 py-file-organizer-v1/
-├── CLAUDE.md          # This file — AI assistant guidance
-├── README.md          # Project documentation
-└── (source code TBD)
-```
-
-### Planned structure (follow this layout as the project grows)
-
-```
-py-file-organizer-v1/
 ├── src/
 │   └── file_organizer/
-│       ├── __init__.py
-│       ├── main.py          # CLI entry point
-│       ├── organizer.py     # Core organization logic
-│       ├── rules.py         # File classification rules
-│       └── utils.py         # Shared utilities
+│       ├── __init__.py       # package marker (empty)
+│       ├── main.py           # CLI entry point (argparse + interactive fallback)
+│       ├── organizer.py      # scan + copy logic; SUPPORTED_EXTENSIONS defined here
+│       └── exif.py           # date extraction: EXIF DateTimeOriginal > DateTime > mtime
 ├── tests/
 │   ├── __init__.py
-│   ├── test_organizer.py
-│   ├── test_rules.py
-│   └── test_utils.py
-├── pyproject.toml           # Project metadata, dependencies, tool config
-├── requirements.txt         # Pinned dependencies (for pip users)
+│   ├── test_exif.py          # unit tests for date extraction
+│   └── test_organizer.py     # integration tests using tmp_path fixtures
+├── pyproject.toml            # project metadata, deps, entry point, ruff + pytest config
 ├── .gitignore
 ├── README.md
 └── CLAUDE.md
 ```
 
-## Development Conventions
+## Key Design Decisions
 
-### Python
+1. **`exifread` only** — zero external Python dependencies beyond `exifread`. No external binary (like `exiftool`) is required.
+2. **Copy, never move** — `shutil.copy2` is used everywhere. Source files are never touched.
+3. **mtime fallback** — when EXIF is absent or malformed (typical for video files), the file's modification time determines the year/month destination.
+4. **Duplicate handling** — identical files (same size + mtime) at the destination are silently skipped. Conflicting different files get a `_1`, `_2` … suffix on the stem.
+5. **src layout** — `src/file_organizer/` avoids import ambiguity. All source lives under `src/`.
+6. **`argparse` only** — no third-party CLI library. Interactive mode is a simple `input()` fallback when args are missing.
 
-- **Version:** Python 3.10+
-- **Style:** Follow PEP 8. Use type hints for function signatures.
-- **Imports:** Group in order: stdlib, third-party, local. Use absolute imports.
-- **Naming:** `snake_case` for functions/variables, `PascalCase` for classes, `UPPER_SNAKE_CASE` for constants.
-
-### Project setup (once infrastructure exists)
+## Development Setup
 
 ```bash
 python -m venv .venv
@@ -57,38 +43,36 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
-### Running tests
+## Running Tests
 
 ```bash
-pytest tests/
+pytest -v
 ```
 
-### Linting and formatting
+Tests use `tmp_path` fixtures and `unittest.mock.patch` to mock `exifread.process_file` — no real media files are needed.
+
+## Linting and Formatting
 
 ```bash
 ruff check .
 ruff format .
 ```
 
-## Git Workflow
+## Adding New File Types
 
-- **Default branch:** `main`
-- Write clear, concise commit messages describing *why* a change was made.
-- Keep commits atomic — one logical change per commit.
+Add the lowercase extension to `SUPPORTED_EXTENSIONS` in `src/file_organizer/organizer.py`. No other changes required.
 
-## Key Design Decisions
+## CLI Usage
 
-1. **src layout** — Use `src/file_organizer/` to avoid import ambiguity and follow modern Python packaging conventions.
-2. **pyproject.toml** — Use `pyproject.toml` as the single source for project metadata, dependencies, and tool configuration (ruff, pytest, etc.). Do not use `setup.py` or `setup.cfg`.
-3. **CLI interface** — Use `argparse` from the standard library for the CLI. Only introduce `click` or `typer` if complexity warrants it.
-4. **No over-engineering** — Start simple. Avoid premature abstractions, plugin systems, or config file formats until the core functionality works.
+```
+file-organizer [--source DIR] [--dest DIR] [--dry-run]
+```
 
-## Guidelines for AI Assistants
+Running without arguments triggers interactive prompts.
 
-- Read existing code before making changes. Do not guess at file contents.
-- Keep changes minimal and focused on the task at hand.
-- Add tests for new functionality. Run existing tests before and after changes.
-- Do not add dependencies without clear justification.
-- Do not create documentation files beyond README.md and CLAUDE.md unless asked.
-- When creating new Python files, always include the `src/file_organizer/` package path.
-- Prefer standard library solutions over third-party packages when reasonable.
+## Python Conventions
+
+- Python 3.10+
+- PEP 8 with type hints on all function signatures
+- `from __future__ import annotations` in every module (for PEP 604 union syntax on 3.10)
+- Imports: stdlib → third-party → local, each group separated by a blank line
