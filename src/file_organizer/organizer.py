@@ -27,13 +27,26 @@ class Summary(TypedDict):
     errors: list[str]
 
 
-def organise(source: Path, dest: Path, dry_run: bool = False) -> Summary:
-    """Recursively copy supported media files from *source* to *dest/YYYY/MM/*.
+def organise(
+    source: Path,
+    dest: Path,
+    event: str | None = None,
+    group_by_day: bool = False,
+    dry_run: bool = False,
+) -> Summary:
+    """Recursively copy supported media files from *source* to *dest/YYYY/subfolder*.
+
+    Subfolder naming:
+      - Default: YYYY-MM
+      - group_by_day=True: YYYY-MM-DD
+      - event provided: <date-part>_event
 
     Args:
-        source:  Directory to scan (recursively).
-        dest:    Root destination directory.
-        dry_run: When True, print planned actions without touching the filesystem.
+        source:       Directory to scan (recursively).
+        dest:         Root destination directory.
+        event:        Optional event name to append to the subfolder.
+        group_by_day: If True, group files by day (YYYY-MM-DD) instead of month.
+        dry_run:      When True, print planned actions without touching the filesystem.
 
     Returns:
         A summary with counts of copied/skipped files and any error messages.
@@ -50,7 +63,7 @@ def organise(source: Path, dest: Path, dry_run: bool = False) -> Summary:
             continue
 
         try:
-            _process_file(filepath, dest, dry_run, summary)
+            _process_file(filepath, dest, event, group_by_day, dry_run, summary)
         except Exception as exc:
             summary["errors"].append(f"{filepath}: {exc}")
 
@@ -61,9 +74,27 @@ def organise(source: Path, dest: Path, dry_run: bool = False) -> Summary:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _process_file(filepath: Path, dest: Path, dry_run: bool, summary: Summary) -> None:
+def _process_file(
+    filepath: Path,
+    dest: Path,
+    event: str | None,
+    group_by_day: bool,
+    dry_run: bool,
+    summary: Summary,
+) -> None:
     date = get_date(filepath)
-    target_dir = dest / f"{date.year:04d}" / f"{date.month:02d}"
+
+    # Structure: dest / YYYY / YYYY-MM[-DD][_event]
+    year_str = f"{date.year:04d}"
+    if group_by_day:
+        subfolder = f"{date.year:04d}-{date.month:02d}-{date.day:02d}"
+    else:
+        subfolder = f"{date.year:04d}-{date.month:02d}"
+
+    if event:
+        subfolder = f"{subfolder}_{event}"
+
+    target_dir = dest / year_str / subfolder
     target = _resolve_target(filepath, target_dir)
 
     if target is None:

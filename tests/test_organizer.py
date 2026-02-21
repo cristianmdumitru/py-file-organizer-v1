@@ -15,7 +15,7 @@ from file_organizer.organizer import SUPPORTED_EXTENSIONS, _resolve_target, orga
 # Fixed date returned by mocked get_date
 _FIXED_DATE = datetime(2024, 3, 15, 10, 0, 0)
 _YEAR_DIR = "2024"
-_MONTH_DIR = "03"
+_MONTH_DIR = "2024-03"
 
 
 def _make_file(directory: Path, name: str, content: bytes = b"data") -> Path:
@@ -96,6 +96,42 @@ class TestOrganise:
         fake_source = tmp_path / "not_a_dir"
         with pytest.raises(NotADirectoryError):
             organise(fake_source, tmp_path / "dest")
+
+    def test_uses_event_name_in_subfolder(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        dest = tmp_path / "dest"
+        _make_file(src, "photo.jpg")
+
+        with patch("file_organizer.organizer.get_date", return_value=_FIXED_DATE):
+            organise(src, dest, event="Ski-Trip")
+
+        expected = dest / "2024" / "2024-03_Ski-Trip" / "photo.jpg"
+        assert expected.exists()
+
+    def test_groups_by_day_when_requested(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        dest = tmp_path / "dest"
+        _make_file(src, "photo.jpg")
+
+        with patch("file_organizer.organizer.get_date", return_value=_FIXED_DATE):
+            organise(src, dest, group_by_day=True)
+
+        expected = dest / "2024" / "2024-03-15" / "photo.jpg"
+        assert expected.exists()
+
+    def test_combines_day_and_event(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        dest = tmp_path / "dest"
+        _make_file(src, "photo.jpg")
+
+        with patch("file_organizer.organizer.get_date", return_value=_FIXED_DATE):
+            organise(src, dest, event="Birthday", group_by_day=True)
+
+        expected = dest / "2024" / "2024-03-15_Birthday" / "photo.jpg"
+        assert expected.exists()
 
 
 # ---------------------------------------------------------------------------

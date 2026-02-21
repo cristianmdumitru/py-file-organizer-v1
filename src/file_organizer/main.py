@@ -12,10 +12,17 @@ from file_organizer.organizer import organise
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="file-organizer",
-        description="Copy photos, RAW files, and videos into dest/YYYY/MM/ using EXIF dates.",
+        description="Copy photos/videos into dest/YYYY/YYYY-MM[-DD][_event] using EXIF dates.",
     )
-    parser.add_argument("--source", type=Path, metavar="DIR", help="Source directory to scan.")
-    parser.add_argument("--dest", type=Path, metavar="DIR", help="Destination root directory.")
+    parser.add_argument("--source", type=Path, metavar="DIR", help="Source directory.")
+    parser.add_argument("--dest", type=Path, metavar="DIR", help="Destination root.")
+    parser.add_argument("--event", "-e", type=str, help="Optional event name (e.g. 'Ski-Trip').")
+    parser.add_argument(
+        "--day",
+        "-d",
+        action="store_true",
+        help="Group by day (YYYY-MM-DD) instead of month.",
+    )
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -25,6 +32,8 @@ def main() -> None:
 
     source = args.source or _prompt_path("Source directory")
     dest = args.dest or _prompt_path("Destination directory")
+    event = args.event or _prompt_optional("Event name (optional)")
+    group_by_day = args.day or (args.day is False and _prompt_bool("Group by day?", default=False))
     dry_run = args.dry_run or _prompt_bool("Dry run?", default=False)
 
     if not source.is_dir():
@@ -35,7 +44,13 @@ def main() -> None:
         print(f"[dry-run] scanning {source} -> {dest}\n")
 
     try:
-        summary = organise(source, dest, dry_run=dry_run)
+        summary = organise(
+            source,
+            dest,
+            event=event,
+            group_by_day=group_by_day,
+            dry_run=dry_run,
+        )
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
@@ -53,6 +68,11 @@ def _prompt_path(label: str) -> Path:
         print("Error: path cannot be empty.", file=sys.stderr)
         sys.exit(1)
     return Path(value)
+
+
+def _prompt_optional(label: str) -> str | None:
+    value = input(f"{label}: ").strip()
+    return value if value else None
 
 
 def _prompt_bool(label: str, default: bool) -> bool:
