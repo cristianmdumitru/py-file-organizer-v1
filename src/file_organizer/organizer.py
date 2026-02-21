@@ -14,10 +14,8 @@ SUPPORTED_EXTENSIONS: frozenset[str] = frozenset(
         # Photos
         ".jpg",
         ".jpeg",
-        ".png",
         ".tiff",
         ".tif",
-        ".webp",
         ".heic",
         # RAW
         ".cr2",

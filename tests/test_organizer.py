@@ -484,12 +484,12 @@ class TestOrganiseSuperseded:
 
         _make_file(src, "new.jpg", b"new")  # will be copied
         _make_file(src, "orig.jpg", b"orig")  # will be superseded (HEIC exists)
-        dup_file = _make_file(src, "dup.png", b"dup")  # will be skipped (identical)
+        dup_file = _make_file(src, "dup.jpg", b"dup")  # will be skipped (identical)
 
         dest_dir = dest / _YEAR_DIR / _MONTH_DIR
         dest_dir.mkdir(parents=True)
         (dest_dir / "orig.heic").write_bytes(b"heic")  # supersedes orig.jpg
-        shutil.copy2(dup_file, dest_dir / "dup.png")  # identical copy already present
+        shutil.copy2(dup_file, dest_dir / "dup.jpg")  # identical copy already present
 
         with patch(
             "file_organizer.organizer.get_metadata",
@@ -564,10 +564,8 @@ class TestSupportedExtensions:
         [
             ".jpg",
             ".jpeg",
-            ".png",
             ".tiff",
             ".tif",
-            ".webp",
             ".heic",
             ".cr2",
             ".cr3",
