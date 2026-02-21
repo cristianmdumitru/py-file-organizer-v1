@@ -9,7 +9,6 @@ from typing import TypedDict
 
 from file_organizer.exif import get_metadata
 
-
 SUPPORTED_EXTENSIONS: frozenset[str] = frozenset(
     {
         # Photos

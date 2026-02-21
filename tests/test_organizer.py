@@ -16,10 +16,12 @@ from file_organizer.organizer import (
     organise,
 )
 
-# Fixed date returned by mocked get_date
+# Fixed date / metadata returned by mocked get_metadata
 _FIXED_DATE = datetime(2024, 3, 15, 10, 0, 0)
+_FIXED_META = {"date": _FIXED_DATE, "camera": None}
 _YEAR_DIR = "2024"
 _MONTH_DIR = "2024-03"
+_PATCH_META = "file_organizer.organizer.get_metadata"
 
 
 def _make_file(directory: Path, name: str, content: bytes = b"data") -> Path:
@@ -40,7 +42,7 @@ class TestOrganise:
         dest = tmp_path / "dest"
         _make_file(src, "photo.jpg")
 
-        with patch("file_organizer.organizer.get_metadata", return_value={"date": _FIXED_DATE, "camera": None}):
+        with patch(_PATCH_META, return_value=_FIXED_META):
             summary = organise(src, dest)
 
         expected = dest / _YEAR_DIR / _MONTH_DIR / "photo.jpg"
@@ -56,7 +58,7 @@ class TestOrganise:
         dest = tmp_path / "dest"
         _make_file(src, "document.pdf")
 
-        with patch("file_organizer.organizer.get_metadata", return_value={"date": _FIXED_DATE, "camera": None}):
+        with patch(_PATCH_META, return_value=_FIXED_META):
             summary = organise(src, dest)
 
         assert summary["copied"] == 0
@@ -69,7 +71,7 @@ class TestOrganise:
         dest = tmp_path / "dest"
         (src / "subdir").mkdir()
 
-        with patch("file_organizer.organizer.get_metadata", return_value={"date": _FIXED_DATE, "camera": None}):
+        with patch(_PATCH_META, return_value=_FIXED_META):
             summary = organise(src, dest)
 
         assert summary["copied"] == 0
@@ -81,7 +83,7 @@ class TestOrganise:
         dest = tmp_path / "dest"
         _make_file(sub, "IMG_001.jpg")
 
-        with patch("file_organizer.organizer.get_metadata", return_value={"date": _FIXED_DATE, "camera": None}):
+        with patch(_PATCH_META, return_value=_FIXED_META):
             summary = organise(src, dest)
 
         assert (dest / _YEAR_DIR / _MONTH_DIR / "IMG_001.jpg").exists()
@@ -93,7 +95,7 @@ class TestOrganise:
         dest = tmp_path / "dest"
         _make_file(src, "clip.mp4")
 
-        with patch("file_organizer.organizer.get_metadata", return_value={"date": _FIXED_DATE, "camera": None}):
+        with patch(_PATCH_META, return_value=_FIXED_META):
             organise(src, dest)
 
         assert (dest / _YEAR_DIR / _MONTH_DIR).is_dir()
@@ -109,7 +111,7 @@ class TestOrganise:
         dest = tmp_path / "dest"
         _make_file(src, "photo.jpg")
 
-        with patch("file_organizer.organizer.get_metadata", return_value={"date": _FIXED_DATE, "camera": None}):
+        with patch(_PATCH_META, return_value=_FIXED_META):
             organise(src, dest, event="Ski-Trip")
 
         expected = dest / "2024" / "2024-03_Ski-Trip" / "photo.jpg"
@@ -121,7 +123,7 @@ class TestOrganise:
         dest = tmp_path / "dest"
         _make_file(src, "photo.jpg")
 
-        with patch("file_organizer.organizer.get_metadata", return_value={"date": _FIXED_DATE, "camera": None}):
+        with patch(_PATCH_META, return_value=_FIXED_META):
             organise(src, dest, group_by_day=True)
 
         expected = dest / "2024" / "2024-03-15" / "photo.jpg"
@@ -133,7 +135,7 @@ class TestOrganise:
         dest = tmp_path / "dest"
         _make_file(src, "photo.jpg")
 
-        with patch("file_organizer.organizer.get_metadata", return_value={"date": _FIXED_DATE, "camera": None}):
+        with patch(_PATCH_META, return_value=_FIXED_META):
             organise(src, dest, event="Birthday", group_by_day=True)
 
         expected = dest / "2024" / "2024-03-15_Birthday" / "photo.jpg"
@@ -145,7 +147,7 @@ class TestOrganise:
         dest = tmp_path / "dest"
         _make_file(src, "photo.jpg")
 
-        with patch("file_organizer.organizer.get_metadata", return_value={"date": _FIXED_DATE, "camera": "iPhone 15"}):
+        with patch(_PATCH_META, return_value={"date": _FIXED_DATE, "camera": "iPhone 15"}):
             organise(src, dest, group_by_camera=True)
 
         expected = dest / "2024" / "2024-03" / "iPhone 15" / "photo.jpg"
@@ -157,7 +159,7 @@ class TestOrganise:
         dest = tmp_path / "dest"
         _make_file(src, "photo.jpg")
 
-        with patch("file_organizer.organizer.get_metadata", return_value={"date": _FIXED_DATE, "camera": None}):
+        with patch(_PATCH_META, return_value=_FIXED_META):
             organise(src, dest, group_by_camera=True)
 
         expected = dest / "2024" / "2024-03" / "Unknown Camera" / "photo.jpg"
@@ -176,7 +178,7 @@ class TestOrganiseDuplicates:
         dest = tmp_path / "dest"
         source_file = _make_file(src, "photo.jpg", b"pixels")
 
-        with patch("file_organizer.organizer.get_metadata", return_value={"date": _FIXED_DATE, "camera": None}):
+        with patch(_PATCH_META, return_value=_FIXED_META):
             # First copy
             organise(src, dest)
             # Sync mtime so identity check passes
@@ -201,7 +203,7 @@ class TestOrganiseDuplicates:
 
         _make_file(src, "photo.jpg", b"original content")
 
-        with patch("file_organizer.organizer.get_metadata", return_value={"date": _FIXED_DATE, "camera": None}):
+        with patch(_PATCH_META, return_value=_FIXED_META):
             summary = organise(src, dest)
 
         assert (dest_dir / "photo_1.jpg").exists()
@@ -219,7 +221,7 @@ class TestOrganiseDuplicates:
 
         _make_file(src, "photo.jpg", b"v2")
 
-        with patch("file_organizer.organizer.get_metadata", return_value={"date": _FIXED_DATE, "camera": None}):
+        with patch(_PATCH_META, return_value=_FIXED_META):
             organise(src, dest)
 
         assert (dest_dir / "photo_2.jpg").exists()
@@ -237,7 +239,7 @@ class TestOrganiseDryRun:
         dest = tmp_path / "dest"
         _make_file(src, "photo.jpg")
 
-        with patch("file_organizer.organizer.get_metadata", return_value={"date": _FIXED_DATE, "camera": None}):
+        with patch(_PATCH_META, return_value=_FIXED_META):
             summary = organise(src, dest, dry_run=True)
 
         assert not dest.exists()
@@ -254,7 +256,7 @@ class TestOrganiseDryRun:
         dest_dir.mkdir(parents=True)
         shutil.copy2(source_file, dest_dir / "photo.jpg")
 
-        with patch("file_organizer.organizer.get_metadata", return_value={"date": _FIXED_DATE, "camera": None}):
+        with patch(_PATCH_META, return_value=_FIXED_META):
             summary = organise(src, dest, dry_run=True)
 
         assert summary["skipped"] == 1

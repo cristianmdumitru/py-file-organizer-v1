@@ -5,10 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from unittest.mock import patch
 
-import pytest
-
 from file_organizer.exif import _from_mtime, _parse_exif_date, get_date, get_metadata
-
 
 # ---------------------------------------------------------------------------
 # get_metadata

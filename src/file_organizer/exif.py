@@ -44,6 +44,7 @@ def get_date(filepath: Path) -> datetime:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+
 def _from_exif(filepath: Path) -> dict[str, datetime | str | None]:
     result: dict[str, datetime | str | None] = {"date": None, "camera": None}
     try:
