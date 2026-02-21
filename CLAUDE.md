@@ -4,7 +4,7 @@ This file provides guidance for AI assistants (and developers) working on this r
 
 ## Project Overview
 
-**py-file-organizer-v1** copies photos, RAW files, and videos into a `dest/YYYY/MM/` folder hierarchy based on EXIF date metadata. Originals are never moved or deleted.
+**py-file-organizer-v1** copies or moves photos, RAW files, and videos into a `dest/YYYY/YYYY-MM/` folder hierarchy based on EXIF date metadata. By default files are copied; pass `--move` to move them instead.
 
 ## Repository Structure
 
@@ -14,7 +14,7 @@ py-file-organizer-v1/
 │   └── file_organizer/
 │       ├── __init__.py       # package marker (empty)
 │       ├── main.py           # CLI entry point (argparse + interactive fallback)
-│       ├── organizer.py      # scan + copy logic; SUPPORTED_EXTENSIONS defined here
+│       ├── organizer.py      # scan + copy/move logic; SUPPORTED_EXTENSIONS defined here
 │       └── exif.py           # date extraction: EXIF DateTimeOriginal > DateTime > mtime
 ├── tests/
 │   ├── __init__.py
@@ -29,11 +29,13 @@ py-file-organizer-v1/
 ## Key Design Decisions
 
 1. **`exifread` only** — zero external Python dependencies beyond `exifread`. No external binary (like `exiftool`) is required.
-2. **Copy, never move** — `shutil.copy2` is used everywhere. Source files are never touched.
+2. **Copy or move** — `shutil.copy2` (copy) or `shutil.move` (move) depending on the `--move` flag. Files that cannot be transferred (identical or superseded at destination) are always left in the source and never deleted.
 3. **mtime fallback** — when EXIF is absent or malformed (typical for video files), the file's modification time determines the year/month destination.
-4. **Duplicate handling** — identical files (same size + mtime) at the destination are silently skipped. Conflicting different files get a `_1`, `_2` … suffix on the stem.
-5. **src layout** — `src/file_organizer/` avoids import ambiguity. All source lives under `src/`.
-6. **`argparse` only** — no third-party CLI library. Interactive mode is a simple `input()` fallback when args are missing.
+4. **Duplicate handling** — identical files (byte-level `filecmp.cmp`) at the destination are silently skipped. Conflicting different files get a `_1`, `_2` … suffix on the stem.
+5. **Superseded detection** — photos (`.jpg`/`.jpeg`/`.tiff`/`.tif`) superseded by `{stem}.heic`, RAW files superseded by `{stem}.dng`, and non-HEVC videos superseded by `{stem}_HEVC.mp4` are recorded but never transferred.
+6. **Log file** — when `--log FILE` is passed (and `--dry-run` is not active), a plain-text log of all skipped and superseded files (those left in source) is written to FILE.
+7. **src layout** — `src/file_organizer/` avoids import ambiguity. All source lives under `src/`.
+8. **`argparse` only** — no third-party CLI library. Interactive mode is a simple `input()` fallback when args are missing.
 
 ## Development Setup
 
@@ -65,7 +67,8 @@ Add the lowercase extension to `SUPPORTED_EXTENSIONS` in `src/file_organizer/org
 ## CLI Usage
 
 ```
-file-organizer [--source DIR] [--dest DIR] [--dry-run]
+file-organizer [--source DIR] [--dest DIR] [--event NAME] [--day] [--camera]
+               [--move] [--log FILE] [--dry-run]
 ```
 
 Running without arguments triggers interactive prompts.

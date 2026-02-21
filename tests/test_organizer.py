@@ -47,8 +47,8 @@ class TestOrganise:
 
         expected = dest / _YEAR_DIR / _MONTH_DIR / "photo.jpg"
         assert expected.exists()
-        assert summary["copied"] == 1
-        assert summary["skipped"] == 0
+        assert summary["transferred"] == 1
+        assert summary["skipped"] == []
         assert summary["superseded"] == []
         assert summary["errors"] == []
 
@@ -61,8 +61,8 @@ class TestOrganise:
         with patch(_PATCH_META, return_value=_FIXED_META):
             summary = organise(src, dest)
 
-        assert summary["copied"] == 0
-        assert summary["skipped"] == 0
+        assert summary["transferred"] == 0
+        assert summary["skipped"] == []
         assert not (dest / _YEAR_DIR).exists()
 
     def test_skips_directories(self, tmp_path):
@@ -74,7 +74,7 @@ class TestOrganise:
         with patch(_PATCH_META, return_value=_FIXED_META):
             summary = organise(src, dest)
 
-        assert summary["copied"] == 0
+        assert summary["transferred"] == 0
 
     def test_recurses_into_subdirectories(self, tmp_path):
         src = tmp_path / "src"
@@ -87,7 +87,7 @@ class TestOrganise:
             summary = organise(src, dest)
 
         assert (dest / _YEAR_DIR / _MONTH_DIR / "IMG_001.jpg").exists()
-        assert summary["copied"] == 1
+        assert summary["transferred"] == 1
 
     def test_creates_dest_year_month_dirs(self, tmp_path):
         src = tmp_path / "src"
@@ -188,8 +188,8 @@ class TestOrganiseDuplicates:
             # Second copy
             summary = organise(src, dest)
 
-        assert summary["skipped"] == 1
-        assert summary["copied"] == 0
+        assert len(summary["skipped"]) == 1
+        assert summary["transferred"] == 0
 
     def test_renames_conflicting_file(self, tmp_path):
         src = tmp_path / "src"
@@ -207,7 +207,7 @@ class TestOrganiseDuplicates:
             summary = organise(src, dest)
 
         assert (dest_dir / "photo_1.jpg").exists()
-        assert summary["copied"] == 1
+        assert summary["transferred"] == 1
 
     def test_increments_suffix_past_existing_renamed_files(self, tmp_path):
         src = tmp_path / "src"
@@ -243,7 +243,7 @@ class TestOrganiseDryRun:
             summary = organise(src, dest, dry_run=True)
 
         assert not dest.exists()
-        assert summary["copied"] == 1  # counted but not written
+        assert summary["transferred"] == 1  # counted but not written
 
     def test_dry_run_reports_skip_for_identical_dest(self, tmp_path):
         src = tmp_path / "src"
@@ -259,8 +259,8 @@ class TestOrganiseDryRun:
         with patch(_PATCH_META, return_value=_FIXED_META):
             summary = organise(src, dest, dry_run=True)
 
-        assert summary["skipped"] == 1
-        assert summary["copied"] == 0
+        assert len(summary["skipped"]) == 1
+        assert summary["transferred"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -393,8 +393,8 @@ class TestOrganiseSuperseded:
             summary = organise(src, dest)
 
         assert not (dest_dir / "photo.jpg").exists()
-        assert summary["copied"] == 0
-        assert summary["skipped"] == 0
+        assert summary["transferred"] == 0
+        assert summary["skipped"] == []
         assert len(summary["superseded"]) == 1
 
     def test_raw_superseded_by_dng_is_not_copied(self, tmp_path):
@@ -414,7 +414,7 @@ class TestOrganiseSuperseded:
             summary = organise(src, dest)
 
         assert not (dest_dir / "shot.cr2").exists()
-        assert summary["copied"] == 0
+        assert summary["transferred"] == 0
         assert len(summary["superseded"]) == 1
 
     def test_video_superseded_by_hevc_is_not_copied(self, tmp_path):
@@ -434,7 +434,7 @@ class TestOrganiseSuperseded:
             summary = organise(src, dest)
 
         assert not (dest_dir / "clip.mp4").exists()
-        assert summary["copied"] == 0
+        assert summary["transferred"] == 0
         assert len(summary["superseded"]) == 1
 
     def test_hevc_file_itself_is_copied_normally(self, tmp_path):
@@ -451,7 +451,7 @@ class TestOrganiseSuperseded:
             summary = organise(src, dest)
 
         assert (dest / _YEAR_DIR / _MONTH_DIR / "clip_HEVC.mp4").exists()
-        assert summary["copied"] == 1
+        assert summary["transferred"] == 1
         assert summary["superseded"] == []
 
     def test_superseded_entry_contains_source_and_superseding_paths(self, tmp_path):
@@ -497,8 +497,8 @@ class TestOrganiseSuperseded:
         ):
             summary = organise(src, dest)
 
-        assert summary["copied"] == 1
-        assert summary["skipped"] == 1
+        assert summary["transferred"] == 1
+        assert len(summary["skipped"]) == 1
         assert len(summary["superseded"]) == 1
         assert summary["errors"] == []
 
@@ -590,3 +590,161 @@ class TestSupportedExtensions:
 
     def test_txt_not_supported(self):
         assert ".txt" not in SUPPORTED_EXTENSIONS
+
+    def test_png_not_supported(self):
+        assert ".png" not in SUPPORTED_EXTENSIONS
+
+    def test_webp_not_supported(self):
+        assert ".webp" not in SUPPORTED_EXTENSIONS
+
+
+# ---------------------------------------------------------------------------
+# organise — move mode
+# ---------------------------------------------------------------------------
+
+
+class TestOrganiseMoveMode:
+    def test_move_removes_file_from_source(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        dest = tmp_path / "dest"
+        source_file = _make_file(src, "photo.jpg")
+
+        with patch(_PATCH_META, return_value=_FIXED_META):
+            summary = organise(src, dest, move=True)
+
+        assert not source_file.exists()
+        assert (dest / _YEAR_DIR / _MONTH_DIR / "photo.jpg").exists()
+        assert summary["transferred"] == 1
+
+    def test_move_leaves_skipped_file_in_source(self, tmp_path):
+        """A file identical to one already at dest must NOT be deleted from source."""
+        src = tmp_path / "src"
+        src.mkdir()
+        dest = tmp_path / "dest"
+        source_file = _make_file(src, "photo.jpg", b"pixels")
+
+        dest_dir = dest / _YEAR_DIR / _MONTH_DIR
+        dest_dir.mkdir(parents=True)
+        shutil.copy2(source_file, dest_dir / "photo.jpg")
+
+        with patch(_PATCH_META, return_value=_FIXED_META):
+            summary = organise(src, dest, move=True)
+
+        assert source_file.exists()  # left in source
+        assert len(summary["skipped"]) == 1
+        assert summary["transferred"] == 0
+
+    def test_move_leaves_superseded_file_in_source(self, tmp_path):
+        """A file superseded by a converted version must NOT be deleted from source."""
+        src = tmp_path / "src"
+        src.mkdir()
+        dest = tmp_path / "dest"
+        source_file = _make_file(src, "photo.jpg")
+
+        dest_dir = dest / _YEAR_DIR / _MONTH_DIR
+        dest_dir.mkdir(parents=True)
+        (dest_dir / "photo.heic").write_bytes(b"heic")
+
+        with patch(_PATCH_META, return_value=_FIXED_META):
+            summary = organise(src, dest, move=True)
+
+        assert source_file.exists()  # left in source
+        assert len(summary["superseded"]) == 1
+        assert summary["transferred"] == 0
+
+    def test_move_dry_run_does_not_move_files(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        dest = tmp_path / "dest"
+        source_file = _make_file(src, "photo.jpg")
+
+        with patch(_PATCH_META, return_value=_FIXED_META):
+            summary = organise(src, dest, move=True, dry_run=True)
+
+        assert source_file.exists()  # nothing actually moved
+        assert not dest.exists()
+        assert summary["transferred"] == 1  # counted but not executed
+
+    def test_copy_mode_leaves_source_intact(self, tmp_path):
+        """Default copy mode must not remove the source file."""
+        src = tmp_path / "src"
+        src.mkdir()
+        dest = tmp_path / "dest"
+        source_file = _make_file(src, "photo.jpg")
+
+        with patch(_PATCH_META, return_value=_FIXED_META):
+            organise(src, dest, move=False)
+
+        assert source_file.exists()
+
+
+# ---------------------------------------------------------------------------
+# organise — log file
+# ---------------------------------------------------------------------------
+
+
+class TestWriteLog:
+    def test_log_written_with_skipped_and_superseded(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        dest = tmp_path / "dest"
+        log_file = tmp_path / "run.log"
+
+        # skipped: identical file already at dest
+        dup_file = _make_file(src, "dup.jpg", b"dup")
+        dest_dir = dest / _YEAR_DIR / _MONTH_DIR
+        dest_dir.mkdir(parents=True)
+        shutil.copy2(dup_file, dest_dir / "dup.jpg")
+
+        # superseded: .heic already at dest
+        _make_file(src, "orig.jpg")
+        (dest_dir / "orig.heic").write_bytes(b"heic")
+
+        with patch(_PATCH_META, return_value=_FIXED_META):
+            organise(src, dest, log_path=log_file)
+
+        assert log_file.exists()
+        content = log_file.read_text(encoding="utf-8")
+        assert "Skipped" in content
+        assert "dup.jpg" in content
+        assert "Superseded" in content
+        assert "orig.jpg" in content
+
+    def test_log_not_written_in_dry_run(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        dest = tmp_path / "dest"
+        log_file = tmp_path / "run.log"
+        _make_file(src, "photo.jpg")
+
+        with patch(_PATCH_META, return_value=_FIXED_META):
+            organise(src, dest, log_path=log_file, dry_run=True)
+
+        assert not log_file.exists()
+
+    def test_log_not_written_when_no_log_path(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        dest = tmp_path / "dest"
+        _make_file(src, "photo.jpg")
+
+        with patch(_PATCH_META, return_value=_FIXED_META):
+            organise(src, dest)  # no log_path
+
+        assert not any(tmp_path.glob("*.log"))
+
+    def test_log_contains_mode_and_paths(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        dest = tmp_path / "dest"
+        log_file = tmp_path / "run.log"
+        _make_file(src, "photo.jpg")
+
+        with patch(_PATCH_META, return_value=_FIXED_META):
+            organise(src, dest, move=True, log_path=log_file)
+
+        content = log_file.read_text(encoding="utf-8")
+        assert "move" in content
+        assert str(src) in content
+        assert str(dest) in content

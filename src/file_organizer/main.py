@@ -12,7 +12,7 @@ from file_organizer.organizer import organise
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="file-organizer",
-        description="Copy photos/videos into dest/YYYY/YYYY-MM[-DD][_event] using EXIF dates.",
+        description="Copy or move photos/videos into dest/YYYY/YYYY-MM[-DD][_event].",
     )
     parser.add_argument("--source", type=Path, metavar="DIR", help="Source directory.")
     parser.add_argument("--dest", type=Path, metavar="DIR", help="Destination root.")
@@ -30,9 +30,22 @@ def main() -> None:
         help="Group by camera model within the destination folder.",
     )
     parser.add_argument(
+        "--move",
+        "-m",
+        action="store_true",
+        help="Move files instead of copying them. Files that cannot be transferred "
+        "(identical or superseded at destination) are left in the source.",
+    )
+    parser.add_argument(
+        "--log",
+        type=Path,
+        metavar="FILE",
+        help="Write a log of skipped and superseded files (those left in source) to FILE.",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Print planned copies without writing any files.",
+        help="Print planned actions without writing any files.",
     )
     args = parser.parse_args()
 
@@ -43,14 +56,17 @@ def main() -> None:
     group_by_camera = args.camera or (
         args.camera is False and _prompt_bool("Group by camera?", default=False)
     )
+    move = args.move
+    log_path = args.log
     dry_run = args.dry_run or _prompt_bool("Dry run?", default=False)
 
     if not source.is_dir():
         print(f"Error: source directory does not exist: {source}", file=sys.stderr)
         sys.exit(1)
 
+    mode_label = "move" if move else "copy"
     if dry_run:
-        print(f"[dry-run] scanning {source} -> {dest}\n")
+        print(f"[dry-run] scanning {source} -> {dest}  (mode: {mode_label})\n")
 
     try:
         summary = organise(
@@ -59,13 +75,15 @@ def main() -> None:
             event=event,
             group_by_day=group_by_day,
             group_by_camera=group_by_camera,
+            move=move,
             dry_run=dry_run,
+            log_path=log_path,
         )
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
 
-    _print_summary(summary, dry_run)
+    _print_summary(summary, move=move, dry_run=dry_run, log_path=log_path)
 
 
 # ---------------------------------------------------------------------------
@@ -94,18 +112,32 @@ def _prompt_bool(label: str, default: bool) -> bool:
     return value in ("y", "yes")
 
 
-def _print_summary(summary: dict, dry_run: bool) -> None:
+def _print_summary(summary: dict, *, move: bool, dry_run: bool, log_path: Path | None) -> None:
     prefix = "[dry-run] " if dry_run else ""
+    action_label = "Moved" if move else "Copied"
+    n_skipped = len(summary["skipped"])
+    n_superseded = len(summary["superseded"])
+
     print(
         f"\n{prefix}Done. "
-        f"Copied: {summary['copied']}  |  "
-        f"Skipped: {summary['skipped']}  |  "
-        f"Superseded: {len(summary['superseded'])}  |  "
+        f"{action_label}: {summary['transferred']}  |  "
+        f"Skipped: {n_skipped}  |  "
+        f"Superseded: {n_superseded}  |  "
         f"Errors: {len(summary['errors'])}"
     )
-    if summary["superseded"]:
+
+    if n_superseded:
         print(f"\n{prefix}Superseded — transcoded/converted version already exists at destination:")
         for entry in summary["superseded"]:
             print(f"  {entry}")
+
+    if n_skipped and move:
+        print(f"\n{prefix}Skipped — identical file already at destination (left in source):")
+        for entry in summary["skipped"]:
+            print(f"  {entry}")
+
+    if log_path and not dry_run:
+        print(f"\n{prefix}Log written to: {log_path}")
+
     for err in summary["errors"]:
         print(f"  ERROR: {err}", file=sys.stderr)
