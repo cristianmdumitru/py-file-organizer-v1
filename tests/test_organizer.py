@@ -278,7 +278,7 @@ class TestFindSupersedingFile:
         result = _find_superseding_file(src, tmp_path)
         assert result == tmp_path / "photo.heic"
 
-    @pytest.mark.parametrize("ext", [".jpg", ".jpeg", ".png", ".tiff", ".tif", ".webp"])
+    @pytest.mark.parametrize("ext", [".jpg", ".jpeg", ".tiff", ".tif"])
     def test_all_photo_originals_superseded_by_heic(self, tmp_path, ext):
         src = tmp_path / "src" / f"photo{ext}"
         src.parent.mkdir(exist_ok=True)

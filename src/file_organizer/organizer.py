@@ -39,7 +39,7 @@ SUPPORTED_EXTENSIONS: frozenset[str] = frozenset(
 
 # Extensions whose originals may have been superseded by a converted/transcoded format.
 # .heic and .dng are the *target* converted formats — they are never themselves superseded.
-_PHOTO_EXTENSIONS: frozenset[str] = frozenset({".jpg", ".jpeg", ".png", ".tiff", ".tif", ".webp"})
+_PHOTO_EXTENSIONS: frozenset[str] = frozenset({".jpg", ".jpeg", ".tiff", ".tif"})
 _RAW_EXTENSIONS: frozenset[str] = frozenset(
     {".cr2", ".cr3", ".nef", ".arw", ".orf", ".rw2", ".raf"}
 )
