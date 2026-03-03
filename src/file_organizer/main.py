@@ -56,7 +56,7 @@ def main() -> None:
     group_by_camera = args.camera or (
         args.camera is False and _prompt_bool("Group by camera?", default=False)
     )
-    move = args.move
+    move = args.move or (args.move is False and _prompt_bool("Move files instead of copy?", default=False))
     log_path = args.log
     dry_run = args.dry_run or _prompt_bool("Dry run?", default=False)
 
