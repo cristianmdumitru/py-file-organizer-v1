@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from unittest.mock import patch
 
-from file_organizer.exif import _from_mtime, _parse_exif_date, get_date, get_metadata
+from file_organizer.exif import (
+    _from_ffprobe,
+    _from_mtime,
+    _parse_exif_date,
+    _parse_ffprobe_date,
+    get_date,
+    get_metadata,
+)
 
 # ---------------------------------------------------------------------------
 # get_metadata
@@ -147,6 +155,195 @@ class TestFromMtime:
         result = _from_mtime(f)
         assert isinstance(result, datetime)
         assert abs((result - datetime.fromtimestamp(f.stat().st_mtime)).total_seconds()) < 1
+
+
+# ---------------------------------------------------------------------------
+# _parse_ffprobe_date
+# ---------------------------------------------------------------------------
+
+
+class TestParseFfprobeDate:
+    def test_iso8601_with_fractional_and_z(self):
+        result = _parse_ffprobe_date("2024-03-15T10:00:00.000000Z")
+        assert result == datetime(2024, 3, 15, 10, 0, 0)
+
+    def test_iso8601_without_fractional(self):
+        result = _parse_ffprobe_date("2024-03-15T10:00:00Z")
+        assert result == datetime(2024, 3, 15, 10, 0, 0)
+
+    def test_space_separated(self):
+        result = _parse_ffprobe_date("2024-03-15 10:00:00")
+        assert result == datetime(2024, 3, 15, 10, 0, 0)
+
+    def test_malformed_returns_none(self):
+        assert _parse_ffprobe_date("not-a-date") is None
+
+    def test_empty_string_returns_none(self):
+        assert _parse_ffprobe_date("") is None
+
+
+# ---------------------------------------------------------------------------
+# _from_ffprobe
+# ---------------------------------------------------------------------------
+
+
+def _ffprobe_output(tags: dict[str, str]) -> str:
+    """Build a JSON string mimicking ffprobe -show_format output."""
+    return json.dumps({"format": {"tags": tags}})
+
+
+class TestFromFfprobe:
+    def test_returns_none_when_ffprobe_not_installed(self, tmp_path):
+        video = tmp_path / "clip.mp4"
+        video.write_bytes(b"\x00")
+
+        with patch("file_organizer.exif.shutil.which", return_value=None):
+            result = _from_ffprobe(video)
+
+        assert result["date"] is None
+        assert result["camera"] is None
+
+    def test_extracts_creation_time_and_camera(self, tmp_path):
+        video = tmp_path / "clip.mp4"
+        video.write_bytes(b"\x00")
+
+        stdout = _ffprobe_output({
+            "creation_time": "2024-03-15T10:00:00.000000Z",
+            "com.apple.quicktime.make": "Apple",
+            "com.apple.quicktime.model": "iPhone 15 Pro",
+        })
+
+        with (
+            patch("file_organizer.exif.shutil.which", return_value="/usr/bin/ffprobe"),
+            patch("file_organizer.exif.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value.returncode = 0
+            mock_run.return_value.stdout = stdout
+            result = _from_ffprobe(video)
+
+        assert result["date"] == datetime(2024, 3, 15, 10, 0, 0)
+        assert result["camera"] == "iPhone 15 Pro"
+
+    def test_extracts_non_apple_camera(self, tmp_path):
+        video = tmp_path / "clip.mp4"
+        video.write_bytes(b"\x00")
+
+        stdout = _ffprobe_output({
+            "creation_time": "2024-01-01T08:00:00.000000Z",
+            "com.apple.quicktime.make": "DJI",
+            "com.apple.quicktime.model": "Mavic 3",
+        })
+
+        with (
+            patch("file_organizer.exif.shutil.which", return_value="/usr/bin/ffprobe"),
+            patch("file_organizer.exif.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value.returncode = 0
+            mock_run.return_value.stdout = stdout
+            result = _from_ffprobe(video)
+
+        assert result["camera"] == "DJI Mavic 3"
+
+    def test_returns_none_on_ffprobe_failure(self, tmp_path):
+        video = tmp_path / "clip.mp4"
+        video.write_bytes(b"\x00")
+
+        with (
+            patch("file_organizer.exif.shutil.which", return_value="/usr/bin/ffprobe"),
+            patch("file_organizer.exif.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value.returncode = 1
+            mock_run.return_value.stdout = ""
+            result = _from_ffprobe(video)
+
+        assert result["date"] is None
+        assert result["camera"] is None
+
+    def test_returns_none_on_subprocess_exception(self, tmp_path):
+        video = tmp_path / "clip.mp4"
+        video.write_bytes(b"\x00")
+
+        with (
+            patch("file_organizer.exif.shutil.which", return_value="/usr/bin/ffprobe"),
+            patch("file_organizer.exif.subprocess.run", side_effect=OSError("boom")),
+        ):
+            result = _from_ffprobe(video)
+
+        assert result["date"] is None
+        assert result["camera"] is None
+
+    def test_date_only_no_camera(self, tmp_path):
+        video = tmp_path / "clip.mp4"
+        video.write_bytes(b"\x00")
+
+        stdout = _ffprobe_output({"creation_time": "2024-06-01T12:00:00.000000Z"})
+
+        with (
+            patch("file_organizer.exif.shutil.which", return_value="/usr/bin/ffprobe"),
+            patch("file_organizer.exif.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value.returncode = 0
+            mock_run.return_value.stdout = stdout
+            result = _from_ffprobe(video)
+
+        assert result["date"] == datetime(2024, 6, 1, 12, 0, 0)
+        assert result["camera"] is None
+
+
+# ---------------------------------------------------------------------------
+# get_metadata — ffprobe integration
+# ---------------------------------------------------------------------------
+
+
+class TestGetMetadataFfprobe:
+    def test_video_uses_ffprobe_for_camera(self, tmp_path):
+        video = tmp_path / "clip.mp4"
+        video.write_bytes(b"\x00")
+
+        stdout = _ffprobe_output({
+            "creation_time": "2024-03-15T10:00:00.000000Z",
+            "com.apple.quicktime.make": "Apple",
+            "com.apple.quicktime.model": "iPhone 15 Pro",
+        })
+
+        with (
+            patch("file_organizer.exif.exifread.process_file", return_value={}),
+            patch("file_organizer.exif.shutil.which", return_value="/usr/bin/ffprobe"),
+            patch("file_organizer.exif.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value.returncode = 0
+            mock_run.return_value.stdout = stdout
+            result = get_metadata(video)
+
+        assert result["date"] == datetime(2024, 3, 15, 10, 0, 0)
+        assert result["camera"] == "iPhone 15 Pro"
+
+    def test_video_falls_back_to_mtime_when_no_ffprobe(self, tmp_path):
+        video = tmp_path / "clip.mp4"
+        video.write_bytes(b"\x00")
+
+        with (
+            patch("file_organizer.exif.exifread.process_file", return_value={}),
+            patch("file_organizer.exif.shutil.which", return_value=None),
+        ):
+            result = get_metadata(video)
+
+        expected = datetime.fromtimestamp(video.stat().st_mtime)
+        assert abs((result["date"] - expected).total_seconds()) < 1
+        assert result["camera"] is None
+
+    def test_non_video_does_not_call_ffprobe(self, tmp_path):
+        photo = tmp_path / "photo.jpg"
+        photo.write_bytes(b"\xff\xd8\xff")
+
+        with (
+            patch("file_organizer.exif.exifread.process_file", return_value={}),
+            patch("file_organizer.exif.shutil.which") as mock_which,
+        ):
+            result = get_metadata(photo)
+
+        mock_which.assert_not_called()
+        assert result["camera"] is None
 
 
 # ---------------------------------------------------------------------------
