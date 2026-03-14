@@ -288,6 +288,9 @@ def _progress_printer() -> callable:
 
 
 def _prompt_path(label: str) -> Path:
+    if not sys.stdin.isatty():
+        print(f"Error: {label} is required in non-interactive mode.", file=sys.stderr)
+        sys.exit(1)
     value = input(f"{label}: ").strip()
     if not value:
         print("Error: path cannot be empty.", file=sys.stderr)
@@ -296,11 +299,15 @@ def _prompt_path(label: str) -> Path:
 
 
 def _prompt_optional(label: str) -> str | None:
+    if not sys.stdin.isatty():
+        return None
     value = input(f"{label}: ").strip()
     return value if value else None
 
 
 def _prompt_bool(label: str, default: bool) -> bool:
+    if not sys.stdin.isatty():
+        return default
     hint = "[Y/n]" if default else "[y/N]"
     value = input(f"{label} {hint}: ").strip().lower()
     if not value:
