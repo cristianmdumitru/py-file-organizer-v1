@@ -153,6 +153,20 @@ class TestOrganise:
         expected = dest / "2024" / "2024-03" / "iPhone 15" / "photo.jpg"
         assert expected.exists()
 
+    def test_skips_dot_underscore_files(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        dest = tmp_path / "dest"
+        _make_file(src, "._photo.jpg")
+        _make_file(src, "photo.jpg")
+
+        with patch(_PATCH_META, return_value=_FIXED_META):
+            summary = organise(src, dest)
+
+        assert summary["transferred"] == 1
+        assert not (dest / _YEAR_DIR / _MONTH_DIR / "._photo.jpg").exists()
+        assert (dest / _YEAR_DIR / _MONTH_DIR / "photo.jpg").exists()
+
     def test_handles_unknown_camera_when_grouped(self, tmp_path):
         src = tmp_path / "src"
         src.mkdir()

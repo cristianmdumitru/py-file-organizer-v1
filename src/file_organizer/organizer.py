@@ -101,6 +101,8 @@ def organise(
     for filepath in sorted(source.rglob("*")):
         if not filepath.is_file():
             continue
+        if filepath.name.startswith("._"):
+            continue
         if filepath.suffix.lower() not in SUPPORTED_EXTENSIONS:
             continue
 
