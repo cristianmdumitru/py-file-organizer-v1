@@ -73,6 +73,7 @@ class Summary(TypedDict):
     bytes_transferred: int
     verified: int
     verify_failed: list[str]
+    unstable: int
     elapsed: float
 
 
@@ -92,6 +93,8 @@ def organise(
     cleanup: bool = False,
     rename_pattern: str | None = None,
     manifest_path: Path | None = None,
+    staging: Path | None = None,
+    settle_seconds: float = 5.0,
 ) -> Summary:
     """Recursively copy or move supported media files from *source* to *dest/YYYY/subfolder*.
 
@@ -111,6 +114,8 @@ def organise(
         cleanup:           Remove empty source directories after move.
         rename_pattern:    Rename files using pattern (e.g. '{date}_{camera}_{seq}').
         manifest_path:     Write a JSON manifest of all operations to this path.
+        staging:           Staging directory. Files here are moved to *source* once stable.
+        settle_seconds:    Min age (seconds) before a staged file is promoted (default: 5).
     """
     if not source.is_dir():
         raise NotADirectoryError(f"Source is not a directory: {source}")
@@ -124,8 +129,15 @@ def organise(
         "bytes_transferred": 0,
         "verified": 0,
         "verify_failed": [],
+        "unstable": 0,
         "elapsed": 0.0,
     }
+
+    # Promote stable files from staging to source before scanning.
+    if staging is not None:
+        n_promoted = _promote_stable_files(staging, source, settle_seconds, summary)
+        if n_promoted:
+            logger.info("Promoted %d file(s) from staging", n_promoted)
 
     # Manifest collects all operations for the undo file.
     manifest_ops: list[dict[str, str]] = []
@@ -156,9 +168,20 @@ def organise(
             if meta is None:
                 meta = get_metadata(filepath)
             _process_file(
-                filepath, dest, event, group_by_day, group_by_camera,
-                group_by_location, move, dry_run, summary, meta,
-                verify, rename_pattern, seq_counters, manifest_ops,
+                filepath,
+                dest,
+                event,
+                group_by_day,
+                group_by_camera,
+                group_by_location,
+                move,
+                dry_run,
+                summary,
+                meta,
+                verify,
+                rename_pattern,
+                seq_counters,
+                manifest_ops,
             )
         except Exception as exc:
             summary["errors"].append(f"{filepath}: {exc}")
@@ -197,6 +220,45 @@ def _collect_files(source: Path, exclude_names: frozenset[str]) -> list[Path]:
         files.append(filepath)
     files.sort()
     return files
+
+
+def _promote_stable_files(
+    staging: Path,
+    source: Path,
+    settle_seconds: float,
+    summary: Summary,
+) -> int:
+    """Move files from staging to source once they've stopped being written."""
+    promoted = 0
+    now = time.time()
+    for filepath in staging.rglob("*"):
+        if not filepath.is_file():
+            continue
+        if filepath.name.startswith("._") or filepath.name in DEFAULT_EXCLUDES:
+            continue
+        if filepath.suffix.lower() not in SUPPORTED_EXTENSIONS:
+            continue
+        try:
+            stat = filepath.stat()
+            age = now - stat.st_mtime
+        except OSError:
+            continue
+        if stat.st_size == 0:
+            summary["unstable"] += 1
+            continue
+        if age >= settle_seconds:
+            rel = filepath.relative_to(staging)
+            dest = source / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(filepath, dest)
+            promoted += 1
+            logger.info("[staged]  %s  (age %.0fs)", filepath.name, age)
+        else:
+            summary["unstable"] += 1
+    # Clean up empty directories left behind after promotion.
+    if promoted:
+        _cleanup_empty_dirs(staging)
+    return promoted
 
 
 def _prefetch_metadata(files: list[Path]) -> dict[Path, Metadata]:
@@ -285,9 +347,13 @@ def _process_file(
     superseding = _find_superseding_file(filepath, target_dir)
     if superseding is not None:
         summary["superseded"].append(f"{filepath}  ->  superseded by  {superseding}")
-        manifest_ops.append({
-            "src": str(filepath), "dest": str(superseding), "action": "superseded",
-        })
+        manifest_ops.append(
+            {
+                "src": str(filepath),
+                "dest": str(superseding),
+                "action": "superseded",
+            }
+        )
         logger.info("[superseded]  %s  (already converted as  %s)", filepath, superseding.name)
         return
 
@@ -350,7 +416,10 @@ def _process_file(
 
 
 def _apply_rename(
-    pattern: str, meta: Metadata, filepath: Path, seq: int,
+    pattern: str,
+    meta: Metadata,
+    filepath: Path,
+    seq: int,
 ) -> str:
     """Apply a rename pattern and return the new filename (with extension)."""
     date = meta["date"]
@@ -412,7 +481,10 @@ def _coords_to_location(lat: float, lon: float) -> str:
 
 
 def _transfer_sidecars(
-    source: Path, target: Path, move: bool, summary: Summary,
+    source: Path,
+    target: Path,
+    move: bool,
+    summary: Summary,
 ) -> None:
     """Copy or move sidecar files that share the same stem as *source*."""
     for ext in SIDECAR_EXTENSIONS:

@@ -165,8 +165,10 @@ def _from_ffprobe(filepath: Path) -> _ExifResult:
         proc = subprocess.run(
             [
                 "ffprobe",
-                "-v", "quiet",
-                "-print_format", "json",
+                "-v",
+                "quiet",
+                "-print_format",
+                "json",
                 "-show_format",
                 str(filepath),
             ],

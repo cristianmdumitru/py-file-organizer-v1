@@ -329,11 +329,13 @@ class TestFromFfprobe:
         video = tmp_path / "clip.mp4"
         video.write_bytes(b"\x00")
 
-        stdout = _ffprobe_output({
-            "creation_time": "2024-03-15T10:00:00.000000Z",
-            "com.apple.quicktime.make": "Apple",
-            "com.apple.quicktime.model": "iPhone 15 Pro",
-        })
+        stdout = _ffprobe_output(
+            {
+                "creation_time": "2024-03-15T10:00:00.000000Z",
+                "com.apple.quicktime.make": "Apple",
+                "com.apple.quicktime.model": "iPhone 15 Pro",
+            }
+        )
 
         with (
             patch("file_organizer.exif.shutil.which", return_value="/usr/bin/ffprobe"),
@@ -350,10 +352,12 @@ class TestFromFfprobe:
         video = tmp_path / "clip.mp4"
         video.write_bytes(b"\x00")
 
-        stdout = _ffprobe_output({
-            "creation_time": "2024-03-15T10:00:00.000000Z",
-            "com.apple.quicktime.location.ISO6709": "+48.8584+002.2945+000.000/",
-        })
+        stdout = _ffprobe_output(
+            {
+                "creation_time": "2024-03-15T10:00:00.000000Z",
+                "com.apple.quicktime.location.ISO6709": "+48.8584+002.2945+000.000/",
+            }
+        )
 
         with (
             patch("file_organizer.exif.shutil.which", return_value="/usr/bin/ffprobe"),
@@ -370,11 +374,13 @@ class TestFromFfprobe:
         video = tmp_path / "clip.mp4"
         video.write_bytes(b"\x00")
 
-        stdout = _ffprobe_output({
-            "creation_time": "2024-01-01T08:00:00.000000Z",
-            "com.apple.quicktime.make": "DJI",
-            "com.apple.quicktime.model": "Mavic 3",
-        })
+        stdout = _ffprobe_output(
+            {
+                "creation_time": "2024-01-01T08:00:00.000000Z",
+                "com.apple.quicktime.make": "DJI",
+                "com.apple.quicktime.model": "Mavic 3",
+            }
+        )
 
         with (
             patch("file_organizer.exif.shutil.which", return_value="/usr/bin/ffprobe"),
@@ -442,11 +448,13 @@ class TestGetMetadataFfprobe:
         video = tmp_path / "clip.mp4"
         video.write_bytes(b"\x00")
 
-        stdout = _ffprobe_output({
-            "creation_time": "2024-03-15T10:00:00.000000Z",
-            "com.apple.quicktime.make": "Apple",
-            "com.apple.quicktime.model": "iPhone 15 Pro",
-        })
+        stdout = _ffprobe_output(
+            {
+                "creation_time": "2024-03-15T10:00:00.000000Z",
+                "com.apple.quicktime.make": "Apple",
+                "com.apple.quicktime.model": "iPhone 15 Pro",
+            }
+        )
 
         with (
             patch("file_organizer.exif.exifread.process_file", return_value={}),

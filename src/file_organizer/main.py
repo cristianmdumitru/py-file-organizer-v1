@@ -27,69 +27,110 @@ def main() -> None:
     )
     parser.add_argument("--source", type=Path, metavar="DIR", help="Source directory.")
     parser.add_argument("--dest", type=Path, metavar="DIR", help="Destination root.")
+    parser.add_argument("--event", "-e", type=str, help="Optional event name (e.g. 'Ski-Trip').")
     parser.add_argument(
-        "--event", "-e", type=str, help="Optional event name (e.g. 'Ski-Trip')."
-    )
-    parser.add_argument(
-        "--day", "-d", action="store_true",
+        "--day",
+        "-d",
+        action="store_true",
         help="Group by day (YYYY-MM-DD) instead of month.",
     )
     parser.add_argument(
-        "--camera", "-c", action="store_true",
+        "--camera",
+        "-c",
+        action="store_true",
         help="Group by camera model within the destination folder.",
     )
     parser.add_argument(
-        "--location", action="store_true",
+        "--location",
+        action="store_true",
         help="Group by GPS location. Install 'reverse_geocoder' for city names.",
     )
     parser.add_argument(
-        "--move", "-m", action="store_true",
+        "--move",
+        "-m",
+        action="store_true",
         help="Move files instead of copying them.",
     )
     parser.add_argument(
-        "--log", type=Path, metavar="FILE",
+        "--log",
+        type=Path,
+        metavar="FILE",
         help="Write a log of skipped/superseded files to FILE.",
     )
     parser.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run",
+        action="store_true",
         help="Print planned actions without writing any files.",
     )
     parser.add_argument(
-        "--exclude", action="append", default=[], metavar="NAME",
+        "--exclude",
+        action="append",
+        default=[],
+        metavar="NAME",
         help="Exclude files matching NAME. May be repeated.",
     )
     parser.add_argument(
-        "--json", action="store_true", dest="json_output",
+        "--json",
+        action="store_true",
+        dest="json_output",
         help="Output the summary as JSON.",
     )
     parser.add_argument(
-        "--verify", action="store_true",
+        "--verify",
+        action="store_true",
         help="SHA-256 verify each file after copying.",
     )
     parser.add_argument(
-        "--cleanup", action="store_true",
+        "--cleanup",
+        action="store_true",
         help="Remove empty source directories after --move.",
     )
     parser.add_argument(
-        "--rename", type=str, metavar="PATTERN",
+        "--rename",
+        type=str,
+        metavar="PATTERN",
         help="Rename files using pattern. Placeholders: "
         "{date}, {time}, {datetime}, {year}, {month}, {day}, "
         "{camera}, {seq}, {original}.",
     )
     parser.add_argument(
-        "--manifest", type=Path, metavar="FILE",
+        "--manifest",
+        type=Path,
+        metavar="FILE",
         help="Write a JSON manifest of all operations (for undo) to FILE.",
     )
     parser.add_argument(
-        "--watch", type=int, nargs="?", const=60, metavar="SECONDS",
+        "--staging",
+        type=Path,
+        metavar="DIR",
+        help="Staging directory. Files here are moved to --source once stable.",
+    )
+    parser.add_argument(
+        "--settle",
+        type=float,
+        default=5.0,
+        metavar="SECONDS",
+        help="Min age (seconds) before a staged file is promoted (default: 5).",
+    )
+    parser.add_argument(
+        "--watch",
+        type=int,
+        nargs="?",
+        const=60,
+        metavar="SECONDS",
         help="Watch source directory and re-run every SECONDS (default: 60).",
     )
     parser.add_argument(
-        "--config", type=Path, metavar="FILE",
+        "--config",
+        type=Path,
+        metavar="FILE",
         help="Path to TOML config file (default: ~/.config/file-organizer/config.toml).",
     )
     parser.add_argument(
-        "-v", "--verbose", action="count", default=0,
+        "-v",
+        "--verbose",
+        action="count",
+        default=0,
         help="Increase verbosity (-v for info, -vv for debug).",
     )
     args = parser.parse_args()
@@ -103,15 +144,12 @@ def main() -> None:
     source = args.source or _prompt_path("Source directory")
     dest = args.dest or _prompt_path("Destination directory")
     event = args.event or _prompt_optional("Event name (optional)")
-    group_by_day = args.day or (
-        args.day is False and _prompt_bool("Group by day?", default=False)
-    )
+    group_by_day = args.day or (args.day is False and _prompt_bool("Group by day?", default=False))
     group_by_camera = args.camera or (
         args.camera is False and _prompt_bool("Group by camera?", default=False)
     )
     move = args.move or (
-        args.move is False
-        and _prompt_bool("Move files instead of copy?", default=False)
+        args.move is False and _prompt_bool("Move files instead of copy?", default=False)
     )
     log_path = args.log
     dry_run = args.dry_run or _prompt_bool("Dry run?", default=False)
@@ -138,14 +176,16 @@ def main() -> None:
         cleanup=args.cleanup,
         rename_pattern=args.rename,
         manifest_path=args.manifest,
+        staging=args.staging,
+        settle_seconds=args.settle,
     )
 
     if args.watch is not None:
-        _watch_loop(source, dest, args.watch, args.json_output, move, dry_run,
-                    log_path, organise_kwargs)
+        _watch_loop(
+            source, dest, args.watch, args.json_output, move, dry_run, log_path, organise_kwargs
+        )
     else:
-        _run_once(source, dest, args.json_output, move, dry_run, log_path,
-                  organise_kwargs)
+        _run_once(source, dest, args.json_output, move, dry_run, log_path, organise_kwargs)
 
 
 def _run_once(
@@ -182,6 +222,7 @@ def _watch_loop(
     log_path: Path | None,
     organise_kwargs: dict,
 ) -> None:
+    logger.info("Watching %s every %ds", source, interval)
     print(f"Watching {source} every {interval}s (Ctrl+C to stop)\n")
     try:
         while True:
@@ -192,6 +233,12 @@ def _watch_loop(
                 print(f"Error: {exc}", file=sys.stderr)
                 time.sleep(interval)
                 continue
+
+            logger.info(
+                "Cycle complete: %d transferred, %d unstable",
+                summary["transferred"],
+                summary.get("unstable", 0),
+            )
 
             if summary["transferred"] > 0:
                 if json_output:
@@ -257,6 +304,12 @@ def _apply_config(args: argparse.Namespace, config: dict) -> argparse.Namespace:
     if "rename" in defaults and not args.rename:
         args.rename = defaults["rename"]
 
+    if "staging" in defaults and not args.staging:
+        args.staging = Path(defaults["staging"])
+
+    if "settle" in defaults and args.settle == 5.0:
+        args.settle = float(defaults["settle"])
+
     return args
 
 
@@ -281,7 +334,9 @@ def _progress_printer() -> callable:
     def _callback(current: int, total: int, filepath: Path) -> None:
         print(
             f"\r[{current}/{total}] {filepath.name}\033[K",
-            end="", flush=True, file=sys.stderr,
+            end="",
+            flush=True,
+            file=sys.stderr,
         )
 
     return _callback
@@ -316,7 +371,11 @@ def _prompt_bool(label: str, default: bool) -> bool:
 
 
 def _print_summary(
-    summary: dict, *, move: bool, dry_run: bool, log_path: Path | None,
+    summary: dict,
+    *,
+    move: bool,
+    dry_run: bool,
+    log_path: Path | None,
 ) -> None:
     prefix = "[dry-run] " if dry_run else ""
     action_label = "Moved" if move else "Copied"
@@ -335,6 +394,8 @@ def _print_summary(
         parts.append(f"Verified: {summary['verified']}")
     if summary.get("verify_failed"):
         parts.append(f"Verify FAILED: {len(summary['verify_failed'])}")
+    if summary.get("unstable", 0):
+        parts.append(f"Unstable: {summary['unstable']}")
 
     print(f"\n{prefix}Done. " + "  |  ".join(parts))
 
@@ -347,18 +408,12 @@ def _print_summary(
         print(f"  {size_mb:.1f} MB in {elapsed:.1f}s ({throughput:.1f} MB/s)")
 
     if n_superseded:
-        print(
-            f"\n{prefix}Superseded — transcoded/converted version "
-            f"already exists at destination:"
-        )
+        print(f"\n{prefix}Superseded — transcoded/converted version already exists at destination:")
         for entry in summary["superseded"]:
             print(f"  {entry}")
 
     if n_skipped and move:
-        print(
-            f"\n{prefix}Skipped — identical file already at "
-            f"destination (left in source):"
-        )
+        print(f"\n{prefix}Skipped — identical file already at destination (left in source):")
         for entry in summary["skipped"]:
             print(f"  {entry}")
 

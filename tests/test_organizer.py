@@ -526,7 +526,10 @@ class TestApplyRename:
         meta = {"date": _FIXED_DATE, "camera": "Sony A7", "gps": None}
         filepath = Path("/src/IMG_001.jpg")
         result = _apply_rename(
-            "{datetime}_{camera}_{seq}_{original}", meta, filepath, 42,
+            "{datetime}_{camera}_{seq}_{original}",
+            meta,
+            filepath,
+            42,
         )
         assert result == "2024-03-15_10-00-00_Sony_A7_042_IMG_001.jpg"
 
@@ -957,9 +960,26 @@ class TestResolveTarget:
 class TestSupportedExtensions:
     @pytest.mark.parametrize(
         "ext",
-        [".jpg", ".jpeg", ".tiff", ".tif", ".heic",
-         ".cr2", ".cr3", ".nef", ".arw", ".dng", ".orf", ".rw2", ".raf",
-         ".mp4", ".mov", ".avi", ".mkv", ".m4v"],
+        [
+            ".jpg",
+            ".jpeg",
+            ".tiff",
+            ".tif",
+            ".heic",
+            ".cr2",
+            ".cr3",
+            ".nef",
+            ".arw",
+            ".dng",
+            ".orf",
+            ".rw2",
+            ".raf",
+            ".mp4",
+            ".mov",
+            ".avi",
+            ".mkv",
+            ".m4v",
+        ],
     )
     def test_expected_extensions_present(self, ext):
         assert ext in SUPPORTED_EXTENSIONS
@@ -1100,3 +1120,83 @@ class TestWriteLog:
         assert "move" in content
         assert str(src) in content
         assert str(dest) in content
+
+
+# ---------------------------------------------------------------------------
+# organise — staging directory
+# ---------------------------------------------------------------------------
+
+
+class TestOrganiseStaging:
+    def test_staging_promotes_old_file(self, tmp_path):
+        staging = tmp_path / "staging"
+        staging.mkdir()
+        src = tmp_path / "src"
+        src.mkdir()
+        dest = tmp_path / "dest"
+
+        # Create a file in staging with mtime 10s in the past.
+        f = _make_file(staging, "photo.jpg", b"staged pixels")
+        import os
+
+        old_mtime = f.stat().st_mtime - 10
+        os.utime(f, (old_mtime, old_mtime))
+
+        with patch(_PATCH_META, return_value=_FIXED_META):
+            summary = organise(src, dest, staging=staging, settle_seconds=5.0)
+
+        # File should have been promoted to source, then organized to dest.
+        assert not (staging / "photo.jpg").exists()
+        assert (dest / _YEAR_DIR / _MONTH_DIR / "photo.jpg").exists()
+        assert summary["transferred"] == 1
+
+    def test_staging_skips_recent_file(self, tmp_path):
+        staging = tmp_path / "staging"
+        staging.mkdir()
+        src = tmp_path / "src"
+        src.mkdir()
+        dest = tmp_path / "dest"
+
+        # File with current mtime — should stay in staging.
+        _make_file(staging, "photo.jpg")
+
+        with patch(_PATCH_META, return_value=_FIXED_META):
+            summary = organise(src, dest, staging=staging, settle_seconds=9999)
+
+        assert (staging / "photo.jpg").exists()
+        assert summary["transferred"] == 0
+        assert summary["unstable"] == 1
+
+    def test_staging_skips_zero_byte(self, tmp_path):
+        staging = tmp_path / "staging"
+        staging.mkdir()
+        src = tmp_path / "src"
+        src.mkdir()
+        dest = tmp_path / "dest"
+
+        # 0-byte file — should stay in staging.
+        f = _make_file(staging, "photo.jpg", b"")
+        import os
+
+        old_mtime = f.stat().st_mtime - 60
+        os.utime(f, (old_mtime, old_mtime))
+
+        with patch(_PATCH_META, return_value=_FIXED_META):
+            summary = organise(src, dest, staging=staging, settle_seconds=5.0)
+
+        assert (staging / "photo.jpg").exists()
+        assert summary["transferred"] == 0
+        assert summary["unstable"] == 1
+
+    def test_no_staging_backward_compatible(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        dest = tmp_path / "dest"
+        _make_file(src, "photo.jpg")
+
+        with patch(_PATCH_META, return_value=_FIXED_META):
+            summary = organise(src, dest, staging=None)
+
+        assert (dest / _YEAR_DIR / _MONTH_DIR / "photo.jpg").exists()
+        assert summary["transferred"] == 1
+        assert summary["unstable"] == 0

@@ -69,9 +69,16 @@ Add the lowercase extension to `SUPPORTED_EXTENSIONS` in `src/file_organizer/org
 ```
 file-organizer [--source DIR] [--dest DIR] [--event NAME] [--day] [--camera]
                [--move] [--log FILE] [--dry-run]
+               [--staging DIR] [--settle SECONDS]
 ```
 
 Running without arguments triggers interactive prompts.
+
+### Staging Directory
+
+The `--staging DIR` flag enables a two-phase ingest pattern for files arriving via NFS drag-and-drop. Files landing in the staging directory are only promoted to `--source` once their mtime is older than `--settle` seconds (default: 5) and they are non-zero size. This prevents the organizer from processing files that are still being written.
+
+Files arriving via rsync with `--temp-dir=.partial` can write directly to `--source` (the `ready/` directory) since rsync uses atomic rename on completion.
 
 ## Python Conventions
 
