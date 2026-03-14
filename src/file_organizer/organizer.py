@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import filecmp
+import logging
 import shutil
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
-from typing import TypedDict
+from typing import Callable, TypedDict
 
-from file_organizer.exif import get_metadata
+from file_organizer.exif import Metadata, get_metadata
+
+logger = logging.getLogger(__name__)
 
 SUPPORTED_EXTENSIONS: frozenset[str] = frozenset(
     {
@@ -36,6 +40,9 @@ SUPPORTED_EXTENSIONS: frozenset[str] = frozenset(
     }
 )
 
+# Sidecar files that should follow their parent media file.
+SIDECAR_EXTENSIONS: frozenset[str] = frozenset({".xmp", ".aae"})
+
 # Extensions whose originals may have been superseded by a converted/transcoded format.
 # .heic and .dng are the *target* converted formats — they are never themselves superseded.
 _PHOTO_EXTENSIONS: frozenset[str] = frozenset({".jpg", ".jpeg", ".tiff", ".tif"})
@@ -47,12 +54,19 @@ _VIDEO_EXTENSIONS: frozenset[str] = frozenset({".mp4", ".mov", ".avi", ".mkv", "
 # Suffix appended to the stem of HEVC-transcoded videos: {NAME}_HEVC.mp4
 _HEVC_SUFFIX = "_HEVC"
 
+# Default patterns to exclude (in addition to ._ prefix).
+DEFAULT_EXCLUDES: frozenset[str] = frozenset({".DS_Store", "Thumbs.db"})
+
+# Progress callback type: (current_index, total_count, filepath)
+ProgressCallback = Callable[[int, int, Path], None]
+
 
 class Summary(TypedDict):
     transferred: int  # files successfully copied or moved
     skipped: list[str]  # "source  ->  identical at  dest" — file left in source
     superseded: list[str]  # "source  ->  superseded by  dest" — file left in source
     errors: list[str]
+    sidecars: int  # sidecar files transferred alongside their parent
 
 
 def organise(
@@ -64,6 +78,8 @@ def organise(
     move: bool = False,
     dry_run: bool = False,
     log_path: Path | None = None,
+    exclude: list[str] | None = None,
+    progress: ProgressCallback | None = None,
 ) -> Summary:
     """Recursively copy or move supported media files from *source* to *dest/YYYY/subfolder*.
 
@@ -88,6 +104,8 @@ def organise(
         dry_run:         When True, print planned actions without touching the filesystem.
         log_path:        If provided, write a log of all skipped and superseded files
                          (those left behind in the source) to this path.
+        exclude:         Additional filename patterns to exclude (matched against filename).
+        progress:        Optional callback invoked for each file: (index, total, filepath).
 
     Returns:
         A summary with counts of transferred files, skipped/superseded file details,
@@ -96,19 +114,35 @@ def organise(
     if not source.is_dir():
         raise NotADirectoryError(f"Source is not a directory: {source}")
 
-    summary: Summary = {"transferred": 0, "skipped": [], "superseded": [], "errors": []}
+    summary: Summary = {
+        "transferred": 0,
+        "skipped": [],
+        "superseded": [],
+        "errors": [],
+        "sidecars": 0,
+    }
 
-    for filepath in sorted(source.rglob("*")):
-        if not filepath.is_file():
-            continue
-        if filepath.name.startswith("._"):
-            continue
-        if filepath.suffix.lower() not in SUPPORTED_EXTENSIONS:
-            continue
+    exclude_names = DEFAULT_EXCLUDES | frozenset(exclude or [])
+
+    # Collect eligible files.
+    files = _collect_files(source, exclude_names)
+    total = len(files)
+    logger.info("Found %d supported file(s) in %s", total, source)
+
+    # Pre-fetch metadata concurrently for I/O-bound EXIF / ffprobe reads.
+    metadata_map = _prefetch_metadata(files)
+
+    for i, filepath in enumerate(files, 1):
+        if progress:
+            progress(i, total, filepath)
 
         try:
+            meta = metadata_map.get(filepath)
+            if meta is None:
+                meta = get_metadata(filepath)
             _process_file(
-                filepath, dest, event, group_by_day, group_by_camera, move, dry_run, summary
+                filepath, dest, event, group_by_day, group_by_camera, move, dry_run,
+                summary, meta,
             )
         except Exception as exc:
             summary["errors"].append(f"{filepath}: {exc}")
@@ -124,6 +158,40 @@ def organise(
 # ---------------------------------------------------------------------------
 
 
+def _collect_files(source: Path, exclude_names: frozenset[str]) -> list[Path]:
+    """Return sorted list of supported media files, filtering out excluded names."""
+    files: list[Path] = []
+    for filepath in source.rglob("*"):
+        if not filepath.is_file():
+            continue
+        if filepath.name.startswith("._"):
+            continue
+        if filepath.name in exclude_names:
+            continue
+        if filepath.suffix.lower() not in SUPPORTED_EXTENSIONS:
+            continue
+        files.append(filepath)
+    files.sort()
+    return files
+
+
+def _prefetch_metadata(files: list[Path]) -> dict[Path, Metadata]:
+    """Read metadata for all files concurrently using a thread pool."""
+    metadata_map: dict[Path, Metadata] = {}
+    if not files:
+        return metadata_map
+
+    with ThreadPoolExecutor() as pool:
+        future_to_path = {pool.submit(get_metadata, f): f for f in files}
+        for future in as_completed(future_to_path):
+            filepath = future_to_path[future]
+            try:
+                metadata_map[filepath] = future.result()
+            except Exception:
+                logger.debug("Metadata prefetch failed for %s, will retry inline", filepath)
+    return metadata_map
+
+
 def _process_file(
     filepath: Path,
     dest: Path,
@@ -133,8 +201,8 @@ def _process_file(
     move: bool,
     dry_run: bool,
     summary: Summary,
+    meta: Metadata,
 ) -> None:
-    meta = get_metadata(filepath)
     date = meta["date"]
 
     # Structure: dest / YYYY / YYYY-MM[-DD][_event]
@@ -150,7 +218,12 @@ def _process_file(
     target_dir = dest / year_str / subfolder
 
     if group_by_camera:
-        camera = meta["camera"] or "Unknown Camera"
+        if meta["camera"]:
+            camera = meta["camera"]
+        elif filepath.suffix.lower() in _VIDEO_EXTENSIONS:
+            camera = "VID"
+        else:
+            camera = "Unknown Camera"
         target_dir = target_dir / camera
 
     # Check whether a transcoded/converted version already exists at the destination.
@@ -158,8 +231,7 @@ def _process_file(
     superseding = _find_superseding_file(filepath, target_dir)
     if superseding is not None:
         summary["superseded"].append(f"{filepath}  ->  superseded by  {superseding}")
-        if dry_run:
-            print(f"[superseded]  {filepath}  (already converted as  {superseding.name})")
+        logger.info("[superseded]  %s  (already converted as  %s)", filepath, superseding.name)
         return
 
     target = _resolve_target(filepath, target_dir)
@@ -168,13 +240,12 @@ def _process_file(
         # Byte-identical file already present — leave in source.
         dest_path = target_dir / filepath.name
         summary["skipped"].append(f"{filepath}  ->  identical at  {dest_path}")
-        if dry_run:
-            print(f"[skip]  {filepath}")
+        logger.info("[skip]  %s", filepath)
         return
 
     action = "move" if move else "copy"
     if dry_run:
-        print(f"[{action}]  {filepath}  ->  {target}")
+        logger.info("[%s]  %s  ->  %s", action, filepath, target)
         summary["transferred"] += 1
         return
 
@@ -184,6 +255,30 @@ def _process_file(
     else:
         shutil.copy2(filepath, target)
     summary["transferred"] += 1
+    logger.debug("[%s]  %s  ->  %s", action, filepath, target)
+
+    # Transfer sidecar files (.xmp, .aae) alongside the main file.
+    _transfer_sidecars(filepath, target, move, summary)
+
+
+def _transfer_sidecars(
+    source: Path,
+    target: Path,
+    move: bool,
+    summary: Summary,
+) -> None:
+    """Copy or move sidecar files that share the same stem as *source*."""
+    for ext in SIDECAR_EXTENSIONS:
+        sidecar = source.with_suffix(ext)
+        if not sidecar.is_file():
+            continue
+        sidecar_dest = target.with_suffix(ext)
+        if move:
+            shutil.move(sidecar, sidecar_dest)
+        else:
+            shutil.copy2(sidecar, sidecar_dest)
+        summary["sidecars"] += 1
+        logger.debug("[sidecar]  %s  ->  %s", sidecar, sidecar_dest)
 
 
 def _write_log(log_path: Path, summary: Summary, source: Path, dest: Path, move: bool) -> None:
