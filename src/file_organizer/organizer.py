@@ -208,16 +208,17 @@ def organise(
 def _collect_files(source: Path, exclude_names: frozenset[str]) -> list[Path]:
     """Return sorted list of supported media files, filtering out excluded names."""
     files: list[Path] = []
-    for filepath in source.rglob("*"):
-        if not filepath.is_file():
-            continue
-        if filepath.name.startswith("._"):
-            continue
-        if filepath.name in exclude_names:
-            continue
-        if filepath.suffix.lower() not in SUPPORTED_EXTENSIONS:
-            continue
-        files.append(filepath)
+    for dirpath, _dirnames, filenames in os.walk(
+        source, onerror=lambda e: logger.warning("Skipping inaccessible path: %s", e)
+    ):
+        for name in filenames:
+            if name.startswith("._"):
+                continue
+            if name in exclude_names:
+                continue
+            if Path(name).suffix.lower() not in SUPPORTED_EXTENSIONS:
+                continue
+            files.append(Path(dirpath) / name)
     files.sort()
     return files
 
@@ -236,7 +237,7 @@ def _promote_stable_files(
             continue
         if filepath.name.startswith("._") or filepath.name in DEFAULT_EXCLUDES:
             continue
-        if filepath.suffix.lower() not in SUPPORTED_EXTENSIONS:
+        if filepath.suffix.lower() not in SUPPORTED_EXTENSIONS | SIDECAR_EXTENSIONS:
             continue
         try:
             stat = filepath.stat()
@@ -249,8 +250,13 @@ def _promote_stable_files(
         if age >= settle_seconds:
             rel = filepath.relative_to(staging)
             dest = source / rel
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(filepath, dest)
+            try:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(filepath, dest)
+            except PermissionError:
+                logger.warning("[staged]  permission denied promoting %s", filepath.name)
+                summary["errors"].append(f"{filepath}: permission denied during promotion")
+                continue
             promoted += 1
             logger.info("[staged]  %s  (age %.0fs)", filepath.name, age)
         else:
@@ -394,6 +400,10 @@ def _process_file(
 
     target_dir.mkdir(parents=True, exist_ok=True)
     file_size = filepath.stat().st_size
+
+    # Compute hash before transfer so we can verify even after a move.
+    src_hash = _sha256(filepath) if verify else None
+
     if move:
         shutil.move(filepath, target)
     else:
@@ -403,9 +413,9 @@ def _process_file(
     manifest_ops.append({"src": str(filepath), "dest": str(target), "action": action})
     logger.debug("[%s]  %s  ->  %s", action, filepath, target)
 
-    # Post-copy verification.
-    if verify and not move:
-        if _verify_file(filepath, target):
+    # Post-transfer verification.
+    if verify:
+        if _sha256(target) == src_hash:
             summary["verified"] += 1
         else:
             summary["verify_failed"].append(f"{filepath}  ->  {target}")

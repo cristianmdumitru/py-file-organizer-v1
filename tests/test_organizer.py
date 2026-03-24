@@ -435,18 +435,21 @@ class TestOrganiseVerify:
         assert summary["verified"] == 1
         assert summary["verify_failed"] == []
 
-    def test_verify_not_performed_in_move_mode(self, tmp_path):
-        """Verification doesn't apply to moves (source is gone)."""
+    def test_verify_works_in_move_mode(self, tmp_path):
+        """Verification hashes before the move so it works even when source is gone."""
         src = tmp_path / "src"
         src.mkdir()
         dest = tmp_path / "dest"
-        _make_file(src, "photo.jpg")
+        _make_file(src, "photo.jpg", b"important pixels")
 
         with patch(_PATCH_META, return_value=_FIXED_META):
             summary = organise(src, dest, move=True, verify=True)
 
         assert summary["transferred"] == 1
-        assert summary["verified"] == 0
+        assert summary["verified"] == 1
+        assert summary["verify_failed"] == []
+        # Source should be gone (moved).
+        assert not (src / "photo.jpg").exists()
 
 
 class TestVerifyFile:
@@ -1187,6 +1190,33 @@ class TestOrganiseStaging:
         assert (staging / "photo.jpg").exists()
         assert summary["transferred"] == 0
         assert summary["unstable"] == 1
+
+    def test_staging_promotes_sidecar_files(self, tmp_path):
+        """Sidecar files (.xmp, .aae) in staging should be promoted alongside media."""
+        staging = tmp_path / "staging"
+        staging.mkdir()
+        src = tmp_path / "src"
+        src.mkdir()
+        dest = tmp_path / "dest"
+
+        # Create a photo + xmp sidecar in staging with old mtime.
+        photo = _make_file(staging, "photo.jpg", b"pixels")
+        sidecar = _make_file(staging, "photo.xmp", b"<xmp/>")
+        import os
+
+        old_mtime = photo.stat().st_mtime - 10
+        os.utime(photo, (old_mtime, old_mtime))
+        os.utime(sidecar, (old_mtime, old_mtime))
+
+        with patch(_PATCH_META, return_value=_FIXED_META):
+            summary = organise(src, dest, staging=staging, settle_seconds=5.0)
+
+        # Both files should have been promoted to source, then the photo organized.
+        assert not (staging / "photo.jpg").exists()
+        assert not (staging / "photo.xmp").exists()
+        assert (src / "photo.xmp").exists()  # sidecar promoted to source
+        assert (dest / _YEAR_DIR / _MONTH_DIR / "photo.jpg").exists()
+        assert summary["transferred"] == 1
 
     def test_no_staging_backward_compatible(self, tmp_path):
         src = tmp_path / "src"
