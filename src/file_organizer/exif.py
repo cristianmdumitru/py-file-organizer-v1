@@ -80,8 +80,27 @@ def get_date(filepath: Path) -> datetime:
 _ExifResult = dict[str, datetime | str | tuple[float, float] | None]
 
 
+class _FilenamePrefixFilter(logging.Filter):
+    """Prepend a filepath to warning-level log messages from exifread."""
+
+    def __init__(self, filepath: Path) -> None:
+        super().__init__()
+        self.filepath = filepath
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.levelno >= logging.WARNING:
+            record.msg = f"%s: {record.msg}"
+            record.args = (self.filepath, *(record.args or ()))
+        return True
+
+
 def _from_exif(filepath: Path) -> _ExifResult:
     result: _ExifResult = {"date": None, "camera": None, "gps": None}
+    # Add the filename to exifread's warnings (e.g. "File format not recognized.")
+    # since exifread only receives a file handle and cannot log the path itself.
+    exifread_logger = logging.getLogger("exifread")
+    filt = _FilenamePrefixFilter(filepath)
+    exifread_logger.addFilter(filt)
     try:
         with filepath.open("rb") as fh:
             tags = exifread.process_file(fh, details=False)
@@ -103,8 +122,10 @@ def _from_exif(filepath: Path) -> _ExifResult:
         # GPS extraction
         result["gps"] = _extract_gps_from_exif(tags)
 
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("EXIF read failed for %s: %s", filepath, exc)
+    finally:
+        exifread_logger.removeFilter(filt)
     return result
 
 
