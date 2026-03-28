@@ -1230,3 +1230,52 @@ class TestOrganiseStaging:
         assert (dest / _YEAR_DIR / _MONTH_DIR / "photo.jpg").exists()
         assert summary["transferred"] == 1
         assert summary["unstable"] == 0
+
+
+# ---------------------------------------------------------------------------
+# organise — one-by-one mode
+# ---------------------------------------------------------------------------
+
+
+class TestOrganiseOneByOne:
+    def test_one_by_one_processes_single_file(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        dest = tmp_path / "dest"
+        _make_file(src, "a.jpg")
+        _make_file(src, "b.jpg")
+        _make_file(src, "c.jpg")
+
+        with patch(_PATCH_META, return_value=_FIXED_META):
+            summary = organise(src, dest, one_by_one=True)
+
+        assert summary["transferred"] == 1
+
+    def test_one_by_one_processes_all_with_repeated_calls(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        dest = tmp_path / "dest"
+        _make_file(src, "a.jpg", b"aaa")
+        _make_file(src, "b.jpg", b"bbb")
+
+        with patch(_PATCH_META, return_value=_FIXED_META):
+            s1 = organise(src, dest, move=True, one_by_one=True)
+            s2 = organise(src, dest, move=True, one_by_one=True)
+            s3 = organise(src, dest, move=True, one_by_one=True)
+
+        assert s1["transferred"] == 1
+        assert s2["transferred"] == 1
+        assert s3["transferred"] == 0  # no files left
+
+    def test_one_by_one_false_processes_all(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        dest = tmp_path / "dest"
+        _make_file(src, "a.jpg", b"aaa")
+        _make_file(src, "b.jpg", b"bbb")
+        _make_file(src, "c.jpg", b"ccc")
+
+        with patch(_PATCH_META, return_value=_FIXED_META):
+            summary = organise(src, dest, one_by_one=False)
+
+        assert summary["transferred"] == 3

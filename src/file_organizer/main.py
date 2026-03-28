@@ -113,6 +113,11 @@ def main() -> None:
         help="Min age (seconds) before a staged file is promoted (default: 5).",
     )
     parser.add_argument(
+        "--one-by-one",
+        action="store_true",
+        help="Process only one file per cycle instead of all files at once.",
+    )
+    parser.add_argument(
         "--watch",
         type=int,
         nargs="?",
@@ -148,8 +153,20 @@ def main() -> None:
     group_by_camera = args.camera or (
         args.camera is False and _prompt_bool("Group by camera?", default=False)
     )
+    group_by_location = args.location or (
+        args.location is False and _prompt_bool("Group by location?", default=False)
+    )
     move = args.move or (
         args.move is False and _prompt_bool("Move files instead of copy?", default=False)
+    )
+    verify = args.verify or (
+        args.verify is False and _prompt_bool("Verify files after transfer?", default=False)
+    )
+    cleanup = args.cleanup or (
+        args.cleanup is False and _prompt_bool("Remove empty source dirs after move?", default=False)
+    )
+    one_by_one = args.one_by_one or (
+        args.one_by_one is False and _prompt_bool("Process one file at a time?", default=False)
     )
     log_path = args.log
     dry_run = args.dry_run or _prompt_bool("Dry run?", default=False)
@@ -167,17 +184,18 @@ def main() -> None:
         event=event,
         group_by_day=group_by_day,
         group_by_camera=group_by_camera,
-        group_by_location=args.location,
+        group_by_location=group_by_location,
         move=move,
         dry_run=dry_run,
         log_path=log_path,
         exclude=args.exclude,
-        verify=args.verify,
-        cleanup=args.cleanup,
+        verify=verify,
+        cleanup=cleanup,
         rename_pattern=args.rename,
         manifest_path=args.manifest,
         staging=args.staging,
         settle_seconds=args.settle,
+        one_by_one=one_by_one,
     )
 
     if args.watch is not None:
@@ -289,6 +307,7 @@ def _apply_config(args: argparse.Namespace, config: dict) -> argparse.Namespace:
         "verify": "verify",
         "cleanup": "cleanup",
         "location": "location",
+        "one_by_one": "one_by_one",
     }
     for config_key, attr in bool_mappings.items():
         if config_key in defaults and not getattr(args, attr, False):

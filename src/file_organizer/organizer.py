@@ -95,6 +95,7 @@ def organise(
     manifest_path: Path | None = None,
     staging: Path | None = None,
     settle_seconds: float = 5.0,
+    one_by_one: bool = False,
 ) -> Summary:
     """Recursively copy or move supported media files from *source* to *dest/YYYY/subfolder*.
 
@@ -116,6 +117,7 @@ def organise(
         manifest_path:     Write a JSON manifest of all operations to this path.
         staging:           Staging directory. Files here are moved to *source* once stable.
         settle_seconds:    Min age (seconds) before a staged file is promoted (default: 5).
+        one_by_one:        Process only one file per invocation instead of all files at once.
     """
     if not source.is_dir():
         raise NotADirectoryError(f"Source is not a directory: {source}")
@@ -148,6 +150,10 @@ def organise(
 
     # Disk space pre-check (skip for dry runs).
     files = _collect_files(source, exclude_names)
+
+    if one_by_one and files:
+        files = files[:1]
+
     total = len(files)
     logger.info("Found %d supported file(s) in %s", total, source)
 
