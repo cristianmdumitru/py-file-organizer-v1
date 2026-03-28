@@ -117,7 +117,9 @@ def organise(
         manifest_path:     Write a JSON manifest of all operations to this path.
         staging:           Staging directory. Files here are moved to *source* once stable.
         settle_seconds:    Min age (seconds) before a staged file is promoted (default: 5).
-        one_by_one:        Process only one file per invocation instead of all files at once.
+        one_by_one:        Skip bulk disk space pre-check and metadata prefetch; read
+                           and move each file individually so each move frees space
+                           before the next.
     """
     if not source.is_dir():
         raise NotADirectoryError(f"Source is not a directory: {source}")
@@ -148,20 +150,17 @@ def organise(
 
     exclude_names = DEFAULT_EXCLUDES | frozenset(exclude or [])
 
-    # Disk space pre-check (skip for dry runs).
     files = _collect_files(source, exclude_names)
-
-    if one_by_one and files:
-        files = files[:1]
-
     total = len(files)
     logger.info("Found %d supported file(s) in %s", total, source)
 
-    if not dry_run and files:
+    # In one-by-one mode, skip the bulk disk space pre-check and metadata
+    # prefetch — each file is read and moved individually so each move frees
+    # space before the next file is processed.
+    if not dry_run and files and not one_by_one:
         _check_disk_space(files, dest)
 
-    # Pre-fetch metadata concurrently for I/O-bound EXIF / ffprobe reads.
-    metadata_map = _prefetch_metadata(files)
+    metadata_map = _prefetch_metadata(files) if not one_by_one else {}
 
     t0 = time.monotonic()
 
