@@ -41,6 +41,15 @@ class Metadata(TypedDict):
 
 def get_metadata(filepath: Path) -> Metadata:
     """Return the best available date, camera, and GPS info for *filepath*."""
+    ext = filepath.suffix.lower()
+
+    # Video files: skip exifread (it can't parse video containers) and go
+    # straight to ffprobe.
+    if ext in _VIDEO_EXTENSIONS:
+        probe = _from_ffprobe(filepath)
+        date = probe["date"] or _from_mtime(filepath)
+        return {"date": date, "camera": probe["camera"], "gps": probe["gps"]}
+
     exif_data = _from_exif(filepath)
     if exif_data["date"] is not None:
         return {
@@ -50,7 +59,7 @@ def get_metadata(filepath: Path) -> Metadata:
         }
 
     # For HEIC files with no exifread results, try Pillow as fallback.
-    if filepath.suffix.lower() in _HEIC_EXTENSIONS:
+    if ext in _HEIC_EXTENSIONS:
         pillow_data = _from_pillow(filepath)
         if pillow_data["date"] is not None:
             return {
@@ -58,12 +67,6 @@ def get_metadata(filepath: Path) -> Metadata:
                 "camera": pillow_data["camera"],
                 "gps": pillow_data["gps"],
             }
-
-    # For video files, try ffprobe before falling back to mtime.
-    if filepath.suffix.lower() in _VIDEO_EXTENSIONS:
-        probe = _from_ffprobe(filepath)
-        date = probe["date"] or _from_mtime(filepath)
-        return {"date": date, "camera": probe["camera"], "gps": probe["gps"]}
 
     return {"date": _from_mtime(filepath), "camera": None, "gps": None}
 

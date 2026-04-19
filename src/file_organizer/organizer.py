@@ -9,6 +9,7 @@ import logging
 import os
 import shutil
 import time
+import urllib.request
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -96,6 +97,7 @@ def organise(
     staging: Path | None = None,
     settle_seconds: float = 5.0,
     one_by_one: bool = False,
+    notify_url: str | None = None,
 ) -> Summary:
     """Recursively copy or move supported media files from *source* to *dest/YYYY/subfolder*.
 
@@ -120,6 +122,7 @@ def organise(
         one_by_one:        Skip bulk disk space pre-check and metadata prefetch; read
                            and move each file individually so each move frees space
                            before the next.
+        notify_url:        Optional URL to POST to after a successful batch.
     """
     if not source.is_dir():
         raise NotADirectoryError(f"Source is not a directory: {source}")
@@ -196,11 +199,14 @@ def organise(
     if log_path is not None and not dry_run:
         _write_log(log_path, summary, source, dest, move)
 
-    if manifest_path is not None and not dry_run:
+    if manifest_path is not None:
         _write_manifest(manifest_path, manifest_ops, source, dest, move)
 
     if cleanup and move and not dry_run:
         _cleanup_empty_dirs(source)
+
+    if notify_url and summary["transferred"] > 0 and not dry_run:
+        _send_notification(notify_url, summary)
 
     return summary
 
@@ -208,6 +214,18 @@ def organise(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _send_notification(url: str, summary: Summary) -> None:
+    """Send a POST request to notify other services of a successful batch."""
+    try:
+        data = json.dumps({"type": "refresh", "summary": summary}).encode("utf-8")
+        req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=5) as response:
+            if response.status >= 400:
+                logger.warning("Notification failed with status %d", response.status)
+    except Exception as exc:
+        logger.warning("Failed to send notification to %s: %s", url, exc)
 
 
 def _collect_files(source: Path, exclude_names: frozenset[str]) -> list[Path]:

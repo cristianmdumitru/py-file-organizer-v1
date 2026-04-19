@@ -100,6 +100,12 @@ def main() -> None:
         help="Write a JSON manifest of all operations (for undo) to FILE.",
     )
     parser.add_argument(
+        "--notify-url",
+        type=str,
+        metavar="URL",
+        help="POST to this URL after a successful batch to notify other services.",
+    )
+    parser.add_argument(
         "--staging",
         type=Path,
         metavar="DIR",
@@ -193,6 +199,7 @@ def main() -> None:
         cleanup=cleanup,
         rename_pattern=args.rename,
         manifest_path=args.manifest,
+        notify_url=args.notify_url,
         staging=args.staging,
         settle_seconds=args.settle,
         one_by_one=one_by_one,
