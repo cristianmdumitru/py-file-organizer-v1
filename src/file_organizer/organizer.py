@@ -682,9 +682,18 @@ def _resolve_target(
     """Return the destination path for *source*, handling name conflicts.
 
     Same *existing* semantics as ``_find_superseding_file``. When a name
-    collision is detected we still have to read the candidate for
-    ``filecmp.cmp`` — that's unavoidable — but all the exists()-style
-    probing for free slots is served from the set.
+    collision is detected we compare via ``filecmp.cmp(shallow=True)`` —
+    a stat-only check (type + size + mtime) with **no byte reads**.
+
+    The old ``shallow=False`` byte compare was dominating HDD IO on the
+    ingest loop: every watch cycle re-read every source file *and* its
+    already-present destination copy just to re-confirm "still
+    identical, still leave in place." ``shallow=True`` collapses that
+    to a stat() pair — essentially free — at the cost of treating a
+    same-size/mtime/different-content pair as identical. In practice
+    that only matters under bit rot, which the organizer's
+    post-transfer ``verify=True`` SHA-256 already guards against when
+    the file was first written.
     """
 
     def _has(name: str) -> bool:
@@ -697,7 +706,7 @@ def _resolve_target(
         return target_dir / name
 
     candidate = target_dir / name
-    if filecmp.cmp(source, candidate, shallow=False):
+    if filecmp.cmp(source, candidate, shallow=True):
         return None
 
     stem, suffix = source.stem, source.suffix
