@@ -36,6 +36,7 @@ py-file-organizer-v1/
 6. **Log file** — when `--log FILE` is passed (and `--dry-run` is not active), a plain-text log of all skipped and superseded files (those left in source) is written to FILE.
 7. **src layout** — `src/file_organizer/` avoids import ambiguity. All source lives under `src/`.
 8. **`argparse` only** — no third-party CLI library. Interactive mode is a simple `input()` fallback when args are missing.
+9. **Target-dir batching** — within a single `organise()` call, files are grouped by their computed `target_dir` and each directory is `listdir`ed exactly once. The snapshot (lowercase name set) feeds both `_find_superseding_file` and `_resolve_target` so per-file presence checks are set lookups, not `.exists()` stats. The set is updated in-memory after each successful transfer so later files in the same batch see earlier writes. This exists specifically for HDD destinations where thousands of per-file stats cause head thrash. `_find_superseding_file` and `_resolve_target` accept an optional `existing` set and fall back to `.exists()` when it's `None`, so standalone callers and the test suite still work without pre-building a cache.
 
 ## Development Setup
 

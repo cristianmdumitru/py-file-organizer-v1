@@ -167,32 +167,61 @@ def organise(
 
     t0 = time.monotonic()
 
-    for i, filepath in enumerate(files, 1):
-        if progress:
-            progress(i, total, filepath)
+    # Group files by their computed target_dir so we can amortize the
+    # per-dir listdir + mkdir across all files heading into the same
+    # folder. On a spinning-rust destination this turns N files × ~5
+    # stat() calls into one listdir per target_dir — big thrash win for
+    # SD-card-sized batches that all land in the same YYYY-MM/Camera/
+    # subtree.
+    grouped: dict[Path, list[tuple[Path, Metadata]]] = defaultdict(list)
+    for filepath in files:
+        meta = metadata_map.get(filepath)
+        if meta is None:
+            meta = get_metadata(filepath)
+        target_dir = _compute_target_dir(
+            filepath,
+            dest,
+            event,
+            group_by_day,
+            group_by_camera,
+            group_by_location,
+            meta,
+        )
+        grouped[target_dir].append((filepath, meta))
 
+    processed = 0
+    for target_dir in sorted(grouped):
+        # Prepare the dir once and snapshot its contents for cheap
+        # superseding / collision lookups. Kept as a lowercase set so
+        # later files in the batch see writes from earlier ones.
+        if not dry_run:
+            target_dir.mkdir(parents=True, exist_ok=True)
         try:
-            meta = metadata_map.get(filepath)
-            if meta is None:
-                meta = get_metadata(filepath)
-            _process_file(
-                filepath,
-                dest,
-                event,
-                group_by_day,
-                group_by_camera,
-                group_by_location,
-                move,
-                dry_run,
-                summary,
-                meta,
-                verify,
-                rename_pattern,
-                seq_counters,
-                manifest_ops,
-            )
-        except Exception as exc:
-            summary["errors"].append(f"{filepath}: {exc}")
+            existing: set[str] | None = {name.lower() for name in os.listdir(target_dir)}
+        except FileNotFoundError:
+            existing = set()
+
+        for filepath, meta in grouped[target_dir]:
+            processed += 1
+            if progress:
+                progress(processed, total, filepath)
+
+            try:
+                _process_file(
+                    filepath,
+                    target_dir,
+                    move,
+                    dry_run,
+                    summary,
+                    meta,
+                    verify,
+                    rename_pattern,
+                    seq_counters,
+                    manifest_ops,
+                    existing,
+                )
+            except Exception as exc:
+                summary["errors"].append(f"{filepath}: {exc}")
 
     summary["elapsed"] = time.monotonic() - t0
 
@@ -324,22 +353,20 @@ def _check_disk_space(files: list[Path], dest: Path) -> None:
         )
 
 
-def _process_file(
+def _compute_target_dir(
     filepath: Path,
     dest: Path,
     event: str | None,
     group_by_day: bool,
     group_by_camera: bool,
     group_by_location: bool,
-    move: bool,
-    dry_run: bool,
-    summary: Summary,
     meta: Metadata,
-    verify: bool,
-    rename_pattern: str | None,
-    seq_counters: dict[Path, int],
-    manifest_ops: list[dict[str, str]],
-) -> None:
+) -> Path:
+    """Compute the destination directory for *filepath* based on its metadata.
+
+    Extracted from the main loop so we can group files by target_dir and
+    amortize per-dir filesystem work (mkdir, listdir) across a batch.
+    """
     date = meta["date"]
 
     # Structure: dest / YYYY / YYYY-MM[-DD][_event]
@@ -372,8 +399,24 @@ def _process_file(
             camera = "Unknown Camera"
         target_dir = target_dir / camera
 
+    return target_dir
+
+
+def _process_file(
+    filepath: Path,
+    target_dir: Path,
+    move: bool,
+    dry_run: bool,
+    summary: Summary,
+    meta: Metadata,
+    verify: bool,
+    rename_pattern: str | None,
+    seq_counters: dict[Path, int],
+    manifest_ops: list[dict[str, str]],
+    existing: set[str] | None,
+) -> None:
     # Check whether a transcoded/converted version already exists at the destination.
-    superseding = _find_superseding_file(filepath, target_dir)
+    superseding = _find_superseding_file(filepath, target_dir, existing)
     if superseding is not None:
         summary["superseded"].append(f"{filepath}  ->  superseded by  {superseding}")
         manifest_ops.append(
@@ -395,33 +438,25 @@ def _process_file(
     else:
         renamed_path = filepath
 
-    target = _resolve_target(renamed_path if rename_pattern else filepath, target_dir)
+    resolve_source = renamed_path if rename_pattern else filepath
+    target = _resolve_target(resolve_source, target_dir, existing)
 
     if target is None:
-        dest_path = target_dir / (renamed_path if rename_pattern else filepath).name
+        dest_path = target_dir / resolve_source.name
         summary["skipped"].append(f"{filepath}  ->  identical at  {dest_path}")
         manifest_ops.append({"src": str(filepath), "dest": str(dest_path), "action": "skipped"})
         logger.info("[skip]  %s", filepath)
         return
-
-    # When renaming, override the target filename.
-    if rename_pattern:
-        target = target_dir / renamed_path.name
-        if target.exists():
-            target = _resolve_target(renamed_path, target_dir)
-            if target is None:
-                dest_path = target_dir / renamed_path.name
-                summary["skipped"].append(f"{filepath}  ->  identical at  {dest_path}")
-                return
 
     action = "move" if move else "copy"
     if dry_run:
         logger.info("[%s]  %s  ->  %s", action, filepath, target)
         summary["transferred"] += 1
         manifest_ops.append({"src": str(filepath), "dest": str(target), "action": action})
+        if existing is not None:
+            existing.add(target.name.lower())
         return
 
-    target_dir.mkdir(parents=True, exist_ok=True)
     file_size = filepath.stat().st_size
 
     # Compute hash before transfer so we can verify even after a move.
@@ -434,6 +469,8 @@ def _process_file(
     summary["transferred"] += 1
     summary["bytes_transferred"] += file_size
     manifest_ops.append({"src": str(filepath), "dest": str(target), "action": action})
+    if existing is not None:
+        existing.add(target.name.lower())
     logger.debug("[%s]  %s  ->  %s", action, filepath, target)
 
     # Post-transfer verification.
@@ -600,43 +637,73 @@ def _write_manifest(
     logger.info("Manifest written to %s", manifest_path)
 
 
-def _find_superseding_file(source: Path, target_dir: Path) -> Path | None:
-    """Return the path of a converted/transcoded file that supersedes *source* at *target_dir*."""
+def _find_superseding_file(
+    source: Path,
+    target_dir: Path,
+    existing: set[str] | None = None,
+) -> Path | None:
+    """Return the path of a converted/transcoded file that supersedes *source* at *target_dir*.
+
+    If *existing* is provided, it's the case-insensitive set of filenames already
+    in *target_dir*; the presence check becomes a set lookup. Otherwise we fall
+    back to an ``exists()`` stat — useful for standalone callers/tests.
+    """
     stem = source.stem
     ext = source.suffix.lower()
 
+    def _has(name: str) -> bool:
+        if existing is not None:
+            return name.lower() in existing
+        return (target_dir / name).exists()
+
     if ext in _PHOTO_EXTENSIONS:
-        candidate = target_dir / f"{stem}.heic"
-        if candidate.exists():
-            return candidate
+        name = f"{stem}.heic"
+        if _has(name):
+            return target_dir / name
 
     if ext in _RAW_EXTENSIONS:
-        candidate = target_dir / f"{stem}.dng"
-        if candidate.exists():
-            return candidate
+        name = f"{stem}.dng"
+        if _has(name):
+            return target_dir / name
 
     if ext in _VIDEO_EXTENSIONS and not stem.endswith(_HEVC_SUFFIX):
-        candidate = target_dir / f"{stem}{_HEVC_SUFFIX}.mp4"
-        if candidate.exists():
-            return candidate
+        name = f"{stem}{_HEVC_SUFFIX}.mp4"
+        if _has(name):
+            return target_dir / name
 
     return None
 
 
-def _resolve_target(source: Path, target_dir: Path) -> Path | None:
-    """Return the destination path for *source*, handling name conflicts."""
-    candidate = target_dir / source.name
+def _resolve_target(
+    source: Path,
+    target_dir: Path,
+    existing: set[str] | None = None,
+) -> Path | None:
+    """Return the destination path for *source*, handling name conflicts.
 
-    if not candidate.exists():
-        return candidate
+    Same *existing* semantics as ``_find_superseding_file``. When a name
+    collision is detected we still have to read the candidate for
+    ``filecmp.cmp`` — that's unavoidable — but all the exists()-style
+    probing for free slots is served from the set.
+    """
 
+    def _has(name: str) -> bool:
+        if existing is not None:
+            return name.lower() in existing
+        return (target_dir / name).exists()
+
+    name = source.name
+    if not _has(name):
+        return target_dir / name
+
+    candidate = target_dir / name
     if filecmp.cmp(source, candidate, shallow=False):
         return None
 
     stem, suffix = source.stem, source.suffix
     counter = 1
     while True:
-        candidate = target_dir / f"{stem}_{counter}{suffix}"
-        if not candidate.exists():
-            return candidate
+        attempt = f"{stem}_{counter}{suffix}"
+        if not _has(attempt):
+            return target_dir / attempt
         counter += 1

@@ -1237,6 +1237,99 @@ class TestOrganiseStaging:
 # ---------------------------------------------------------------------------
 
 
+class TestOrganiseTargetDirBatching:
+    """Each target_dir should be listed from disk exactly once per run.
+
+    That's the whole point of the batching refactor — on a spinning HDD
+    destination, doing ``os.listdir`` once and then serving per-file
+    superseding / collision lookups from a set turns an O(N files ×
+    stat) seek storm into O(N target_dirs × listdir).
+    """
+
+    def test_listdir_called_once_per_target_dir(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        dest = tmp_path / "dest"
+
+        # Three files heading to three distinct target_dirs.
+        _make_file(src, "photo.jpg", b"a")
+        _make_file(src, "clip.mp4", b"b")  # goes under VID/
+        _make_file(src, "shot.cr2", b"c")
+
+        # Different metadata per file → different target_dirs (different months).
+        meta_jan = {"date": datetime(2024, 1, 15), "camera": None, "gps": None}
+        meta_feb = {"date": datetime(2024, 2, 15), "camera": None, "gps": None}
+        meta_mar = {"date": datetime(2024, 3, 15), "camera": None, "gps": None}
+        meta_by_name = {
+            "photo.jpg": meta_jan,
+            "clip.mp4": meta_feb,
+            "shot.cr2": meta_mar,
+        }
+
+        def fake_get_metadata(path: Path):
+            return meta_by_name[path.name]
+
+        real_listdir = __import__("os").listdir
+        seen: list[str] = []
+
+        def tracking_listdir(p, *a, **kw):  # noqa: ANN001
+            seen.append(str(p))
+            return real_listdir(p, *a, **kw)
+
+        with (
+            patch(_PATCH_META, side_effect=fake_get_metadata),
+            patch("file_organizer.organizer.os.listdir", side_effect=tracking_listdir),
+        ):
+            summary = organise(src, dest, group_by_camera=True)
+
+        # Each distinct target_dir visited exactly once.
+        assert summary["transferred"] == 3
+        assert len(seen) == len(set(seen)), f"listdir called multiple times on same dir: {seen}"
+        # And we hit exactly the three target_dirs we expect.
+        assert len(seen) == 3
+
+    def test_later_file_in_batch_sees_earlier_write(self, tmp_path):
+        """Two conflicting files in the same target_dir: second one must
+        get the _1 suffix, proving the in-memory cache is updated after
+        each transfer rather than re-listing the dir."""
+        src = tmp_path / "src"
+        src.mkdir()
+        dest = tmp_path / "dest"
+        _make_file(src, "photo.jpg", b"v0")  # will go to photo.jpg
+
+        # Pre-seed the target with a different "photo.jpg" so our source
+        # becomes the suffix-bump case; then add a second source file
+        # that also wants "photo.jpg".
+        target_dir = dest / _YEAR_DIR / _MONTH_DIR
+        target_dir.mkdir(parents=True)
+        (target_dir / "photo.jpg").write_bytes(b"existing")
+
+        # Second file with the same name but different content, arranged
+        # so it processes after the first via lexical ordering within
+        # the same group (a.jpg → photo.jpg means we need same name).
+        # Easier: rename-pattern case is already covered; here just
+        # verify that processing two differently-suffixed files leaves
+        # the cache consistent.
+        _make_file(src, "photo_1.jpg", b"v1")  # pre-existing-style collision
+
+        with patch(_PATCH_META, return_value=_FIXED_META):
+            summary = organise(src, dest)
+
+        # photo.jpg → photo_1.jpg (bumped because pre-seeded conflict),
+        # then photo_1.jpg from source sees the just-written photo_1.jpg
+        # in the cache and bumps to photo_1_1.jpg. If the cache weren't
+        # updated after the first transfer, the second file would
+        # silently overwrite it.
+        assert summary["transferred"] == 2
+        names = sorted(p.name for p in target_dir.iterdir())
+        assert names == ["photo.jpg", "photo_1.jpg", "photo_1_1.jpg"]
+        # And the contents prove the in-memory cache saved us from an
+        # overwrite: photo_1.jpg holds the bytes of the first source
+        # (b"v0"), photo_1_1.jpg holds the second (b"v1").
+        assert (target_dir / "photo_1.jpg").read_bytes() == b"v0"
+        assert (target_dir / "photo_1_1.jpg").read_bytes() == b"v1"
+
+
 class TestOrganiseOneByOne:
     def test_one_by_one_processes_all_files(self, tmp_path):
         src = tmp_path / "src"
