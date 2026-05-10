@@ -47,7 +47,7 @@ def get_metadata(filepath: Path) -> Metadata:
     # straight to ffprobe.
     if ext in _VIDEO_EXTENSIONS:
         probe = _from_ffprobe(filepath)
-        date = probe["date"] or _from_mtime(filepath)
+        date = probe["date"] or _from_json_sidecar(filepath) or _from_mtime(filepath)
         return {"date": date, "camera": probe["camera"], "gps": probe["gps"]}
 
     exif_data = _from_exif(filepath)
@@ -68,6 +68,11 @@ def get_metadata(filepath: Path) -> Metadata:
                 "gps": pillow_data["gps"],
             }
 
+    # Check for Google Takeout JSON sidecar before mtime.
+    json_date = _from_json_sidecar(filepath)
+    if json_date:
+        return {"date": json_date, "camera": None, "gps": None}
+
     return {"date": _from_mtime(filepath), "camera": None, "gps": None}
 
 
@@ -79,6 +84,37 @@ def get_date(filepath: Path) -> datetime:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+def _from_json_sidecar(filepath: Path) -> datetime | None:
+    """Look for a Google Takeout .json sidecar and extract photoTakenTime.
+    
+    Checks for:
+      1. original_name.ext.json
+      2. original_name.json
+    """
+    candidates = [
+        filepath.with_suffix(filepath.suffix + ".json"),
+        filepath.with_suffix(".json"),
+    ]
+    
+    for sidecar in candidates:
+        if not sidecar.exists():
+            continue
+            
+        try:
+            with sidecar.open("r") as f:
+                data = json.load(f)
+                
+            # Google Takeout format:
+            # { "photoTakenTime": { "timestamp": "1615802400", ... }, ... }
+            taken_time = data.get("photoTakenTime", {})
+            ts = taken_time.get("timestamp")
+            if ts:
+                return datetime.fromtimestamp(int(ts))
+        except (json.JSONDecodeError, ValueError, KeyError, OSError):
+            continue
+            
+    return None
 
 _ExifResult = dict[str, datetime | str | tuple[float, float] | None]
 
